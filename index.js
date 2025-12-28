@@ -13,7 +13,7 @@ const MONGO_URI = process.env.MONGO_URI;
 const BRAND_NAME = "Sugar Rush";
 const BRAND_COLOR = 0xFFA500; // Orange
 const SUPPORT_SERVER_LINK = "https://discord.gg/ceT3Gqwquj";
-const SUPPORT_EMAIL = "help@sugarrush.gg";
+const SUPPORT_SERVER_ID = '1454857011866112063';
 
 // --- IDs ---
 const ROLES = {
@@ -21,8 +21,8 @@ const ROLES = {
     DELIVERY: '1454877287953469632',
     MANAGER: '1454876343878549630',
     OWNER: '662655499811946536',
-    SENIOR_COOK: '0', // Placeholder
-    SENIOR_DELIVERY: '0', // Placeholder
+    SENIOR_COOK: '0', 
+    SENIOR_DELIVERY: '0',
     BYPASS: '1454936082591252534',
     VIP: '1454935878408605748'
 };
@@ -31,14 +31,12 @@ const CHANNELS = {
     COOK: '1454879418999767122',
     DELIVERY: '1454880879741767754',
     WARNING: '1454881451161026637',
+    VACATION: '1454909580894015754',
+    BACKUP: '1454888266451910901',
     RATINGS: '1454884136740327557',
     COMPLAINT: '1454886383662665972',
-    BACKUP: '1454888266451910901',
-    QUOTA: '1454895987322519672',
-    VACATION: '1454909580894015754'
+    QUOTA: '1454895987322519672'
 };
-
-const SUPPORT_SERVER_ID = '1454857011866112063';
 
 // --- 2. DATABASE SCHEMAS ---
 const orderSchema = new mongoose.Schema({
@@ -46,7 +44,7 @@ const orderSchema = new mongoose.Schema({
     user_id: String,
     guild_id: String,
     channel_id: String,
-    status: { type: String, default: 'pending' }, // pending, claimed, cooking, ready, delivered, cancelled_warn, cancelled_fdo
+    status: { type: String, default: 'pending' },
     item: String,
     is_vip: Boolean,
     created_at: { type: Date, default: Date.now },
@@ -56,7 +54,6 @@ const orderSchema = new mongoose.Schema({
     ready_at: Date,
     images: [String],
     rating: Number,
-    complaint: String,
     backup_msg_id: String
 });
 
@@ -76,21 +73,18 @@ const userSchema = new mongoose.Schema({
 const premiumSchema = new mongoose.Schema({
     user_id: String,
     is_vip: Boolean,
-    expires_at: Date,
-    redeemed_code: String
+    expires_at: Date
 });
 
 const codeSchema = new mongoose.Schema({
     code: String,
     status: { type: String, default: 'unused' },
-    created_by: String,
-    redeemed_by: String,
-    redeemed_at: Date
+    created_by: String
 });
 
 const vacationSchema = new mongoose.Schema({
     user_id: String,
-    status: String, // active, expired
+    status: String,
     end_date: Date
 });
 
@@ -118,60 +112,34 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildPresences
     ],
     partials: [Partials.Channel]
 });
 
-// --- 4. HELPERS ---
-
+// --- 4. HELPER FUNCTIONS ---
 const isStaff = (member) => {
     if (!member) return false;
-    const roles = member.roles.cache;
-    return roles.has(ROLES.COOK) || roles.has(ROLES.DELIVERY) || roles.has(ROLES.MANAGER) || member.id === ROLES.OWNER;
-};
-
-const isManager = (member) => {
-    if (!member) return false;
-    return member.roles.cache.has(ROLES.MANAGER) || member.id === ROLES.OWNER;
-};
-
-const hasBypass = (member) => {
-    if (ROLES.BYPASS === '0' || !member) return false;
-    return member.roles.cache.has(ROLES.BYPASS);
+    const r = member.roles.cache;
+    return r.has(ROLES.COOK) || r.has(ROLES.DELIVERY) || r.has(ROLES.MANAGER) || member.id === ROLES.OWNER;
 };
 
 const updateMasterLog = async (orderId) => {
     try {
         const channel = await client.channels.fetch(CHANNELS.BACKUP).catch(() => null);
         if (!channel) return;
-
         const o = await Order.findOne({ order_id: orderId });
         if (!o) return;
 
-        const statusMap = {
-            "pending": { text: "⬜ PENDING", color: 0x95a5a6 },
-            "claimed": { text: "✋ CLAIMED", color: BRAND_COLOR },
-            "cooking": { text: "👨‍🍳 COOKING", color: 0xe67e22 },
-            "ready": { text: "📦 READY", color: 0x2ecc71 },
-            "delivered": { text: "🚴 DELIVERED", color: 0x3498db },
-            "cancelled_warn": { text: "⚠️ CANCELLED (WARN)", color: 0xe74c3c },
-            "cancelled_fdo": { text: "🛑 CANCELLED (FORCE)", color: 0x992d22 }
-        };
-
-        const statusData = statusMap[o.status] || { text: "UNKNOWN", color: 0x000000 };
-        const createdTs = Math.floor(o.created_at.getTime() / 1000);
-
         const embed = new EmbedBuilder()
-            .setTitle(`🍩 ${BRAND_NAME} Order #${o.order_id}`)
-            .setColor(statusData.color)
+            .setTitle(`🍩 Order #${o.order_id}`)
+            .setColor(BRAND_COLOR)
             .addFields(
-                { name: 'Status', value: `**${statusData.text}**`, inline: true },
+                { name: 'Status', value: o.status.toUpperCase(), inline: true },
                 { name: 'Item', value: o.item, inline: true },
                 { name: 'Client', value: `<@${o.user_id}>`, inline: true },
-                { name: 'Chef', value: o.chef_name || 'None', inline: true },
-                { name: 'Deliverer', value: o.deliverer_id ? `<@${o.deliverer_id}>` : 'None', inline: true },
-                { name: 'Created', value: `<t:${createdTs}:R>`, inline: true }
+                { name: 'Chef', value: o.chef_name || 'None', inline: true }
             );
 
         if (!o.backup_msg_id) {
@@ -179,18 +147,102 @@ const updateMasterLog = async (orderId) => {
             o.backup_msg_id = msg.id;
             await o.save();
         } else {
-            try {
-                const msg = await channel.messages.fetch(o.backup_msg_id);
-                await msg.edit({ embeds: [embed] });
-            } catch (e) {
-                const msg = await channel.send({ embeds: [embed] });
-                o.backup_msg_id = msg.id;
-                await o.save();
-            }
+            const msg = await channel.messages.fetch(o.backup_msg_id).catch(() => null);
+            if (msg) await msg.edit({ embeds: [embed] });
         }
     } catch (e) { console.error(e); }
 };
 
+const generateCode = () => `VIP-${Math.random().toString(36).substr(2, 4).toUpperCase()}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+
+// --- 5. EVENTS ---
+
+client.once('clientReady', async () => {
+    console.log(`🚀 ${BRAND_NAME} is ONLINE as ${client.user.tag}`);
+    client.user.setPresence({ activities: [{ name: '/order | Sugar Rush', type: ActivityType.Playing }], status: 'online' });
+
+    try {
+        await mongoose.connect(MONGO_URI);
+        console.log("✅ Connected to MongoDB");
+    } catch (e) { console.error("❌ MongoDB Error:", e); }
+
+    // Register Commands
+    const commands = [
+        { name: 'order', description: 'Order food', options: [{ name: 'item', type: 3, required: true, description: 'Item' }] },
+        { name: 'claim', description: 'Claim order', options: [{ name: 'id', type: 3, required: true, description: 'ID' }] },
+        { 
+            name: 'cook', 
+            description: 'Cook order', 
+            options: [
+                { name: 'id', type: 3, required: true, description: 'ID' }, 
+                { name: 'image', type: 11, required: true, description: 'Proof 1' },
+                { name: 'image2', type: 11, required: false, description: 'Proof 2' },
+                { name: 'image3', type: 11, required: false, description: 'Proof 3' }
+            ] 
+        },
+        { name: 'deliver', description: 'Deliver order', options: [{ name: 'id', type: 3, required: true, description: 'ID' }] },
+        { name: 'setscript', description: 'Set delivery message', options: [{ name: 'message', type: 3, required: true, description: 'Script' }] },
+        { name: 'invite', description: 'Get invite link' },
+        { name: 'warn', description: 'Warn user', options: [{ name: 'id', type: 3, required: true, description: 'ID' }, { name: 'reason', type: 3, required: true, description: 'Reason' }] },
+        { name: 'fdo', description: 'Force delete order', options: [{ name: 'id', type: 3, required: true, description: 'ID' }, { name: 'reason', type: 3, required: true, description: 'Reason' }] },
+        { name: 'unban', description: 'Unban user', options: [{ name: 'user', type: 6, required: true, description: 'User' }] },
+        { name: 'rules', description: 'View rules' },
+        { name: 'generate_codes', description: 'Owner: Gen Codes', options: [{ name: 'amount', type: 4, required: true, description: 'Amount' }] },
+        { name: 'redeem', description: 'Redeem VIP', options: [{ name: 'code', type: 3, required: true, description: 'Code' }] },
+        { name: 'vacation', description: 'Request vacation', options: [{ name: 'days', type: 4, required: true, description: 'Days' }, { name: 'reason', type: 3, required: true, description: 'Reason' }] },
+        { name: 'quota', description: 'Check your current quota status' },
+        { name: 'stats', description: 'Check staff stats (Rating, Totals)', options: [{ name: 'user', type: 6, required: false, description: 'User' }] },
+        { name: 'rate', description: 'Rate service', options: [{ name: 'id', type: 3, required: true, description: 'ID' }, { name: 'stars', type: 4, required: true, description: '1-5' }] },
+        { name: 'complain', description: 'Complaint', options: [{ name: 'id', type: 3, required: true, description: 'ID' }, { name: 'reason', type: 3, required: true, description: 'Reason' }] },
+        { name: 'orderlist', description: 'View queue' },
+        { name: 'unclaim', description: 'Drop order', options: [{ name: 'id', type: 3, required: true, description: 'ID' }] },
+        { name: 'runquota', description: 'Manager: Force Run Quota' }
+    ];
+
+    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+    try { await rest.put(Routes.applicationCommands(client.user.id), { body: commands }); } catch (e) { console.error(e); }
+    
+    setInterval(checkTasks, 60000);
+});
+
+// --- 6. AUTOMATED SYSTEMS ---
+
+async function checkTasks() {
+    // 1. Auto Delivery
+    const threshold = new Date(Date.now() - 20 * 60000);
+    const overdue = await Order.find({ status: 'ready', ready_at: { $lt: threshold } });
+    for (const o of overdue) {
+        try {
+            const guild = client.guilds.cache.get(o.guild_id);
+            if (guild) {
+                const channel = guild.channels.cache.get(o.channel_id);
+                if (channel) {
+                    let imgStr = o.images.join('\n');
+                    await channel.send(`<@${o.user_id}> 🤖 **Auto-Delivery**\nChef: ${o.chef_name}\n${imgStr}`);
+                    o.status = 'delivered';
+                    o.deliverer_id = 'AUTO_BOT';
+                    await o.save();
+                    updateMasterLog(o.order_id);
+                }
+            }
+        } catch(e) {}
+    }
+
+    // 2. Weekly Quota Check (Sunday 23:00 UTC)
+    const now = new Date();
+    if (now.getUTCDay() === 0 && now.getUTCHours() === 23) {
+        const lastRun = await Config.findOne({ key: 'last_quota_run' });
+        const twelveHours = 12 * 60 * 60 * 1000;
+        if (!lastRun || (now - lastRun.date) > twelveHours) {
+            for (const [id, guild] of client.guilds.cache) {
+                await runQuotaLogic(guild);
+            }
+            await Config.findOneAndUpdate({ key: 'last_quota_run' }, { date: now }, { upsert: true });
+        }
+    }
+}
+
+// --- QUOTA LOGIC ---
 const calculateTargets = (volume, staffCount) => {
     if (staffCount === 0) return { norm: 0, senior: 0 };
     let raw = Math.ceil(volume / staffCount);
@@ -203,660 +255,349 @@ const calculateTargets = (volume, staffCount) => {
     return { norm, senior };
 };
 
-const generateCode = () => {
-    const seg = () => Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `VIP-${seg()}-${seg()}-${seg()}`;
-};
+async function runQuotaLogic(guild) {
+    const quotaChannel = guild.channels.cache.get(CHANNELS.QUOTA);
+    if (!quotaChannel) return;
 
-// --- 5. INITIALIZATION & EVENTS ---
+    const cookRole = guild.roles.cache.get(ROLES.COOK);
+    const delRole = guild.roles.cache.get(ROLES.DELIVERY);
+    if(!cookRole || !delRole) return;
+    await guild.members.fetch(); 
 
-client.once('ready', async () => {
-    console.log(`🚀 ${BRAND_NAME} is ONLINE as ${client.user.tag}`);
+    const cooks = cookRole.members.map(m => m);
+    const deliverers = delRole.members.map(m => m);
+
+    const allUsers = await User.find({});
+    let totalCook = 0;
+    let totalDel = 0;
     
-    // Connect to Mongo
-    try {
-        await mongoose.connect(MONGO_URI);
-        console.log("✅ Connected to MongoDB");
-    } catch (e) {
-        console.error("❌ MongoDB Connection Error:", e);
+    for (const m of cooks) {
+        const u = allUsers.find(u => u.user_id === m.id);
+        if(u) totalCook += u.cook_count_week;
+    }
+    for (const m of deliverers) {
+        const u = allUsers.find(u => u.user_id === m.id);
+        if(u) totalDel += u.deliver_count_week;
     }
 
-    // Register Slash Commands
-    const commands = [
-        {
-            name: 'order',
-            description: 'Place a new order',
-            options: [{ name: 'item', type: 3, description: 'What do you want to order?', required: true }]
-        },
-        {
-            name: 'orderlist',
-            description: 'View the active queue'
-        },
-        {
-            name: 'claim',
-            description: 'Claim an order (Cooks)',
-            options: [{ name: 'id', type: 3, description: 'Order ID', required: true }]
-        },
-        {
-            name: 'unclaim',
-            description: 'Release an order',
-            options: [{ name: 'id', type: 3, description: 'Order ID', required: true }]
-        },
-        {
-            name: 'cook',
-            description: 'Finish cooking an order',
-            options: [
-                { name: 'id', type: 3, description: 'Order ID', required: true },
-                { name: 'image', type: 11, description: 'Proof of food', required: true },
-                { name: 'extra1', type: 11, description: 'Extra Image', required: false }
-            ]
-        },
-        {
-            name: 'deliver',
-            description: 'Deliver an order',
-            options: [{ name: 'id', type: 3, description: 'Order ID', required: true }]
-        },
-        {
-            name: 'setscript',
-            description: 'Set custom delivery message',
-            options: [{ name: 'message', type: 3, description: 'Your custom script', required: true }]
-        },
-        {
-            name: 'warn',
-            description: 'Cancel order and warn user',
-            options: [
-                { name: 'id', type: 3, description: 'Order ID', required: true },
-                { name: 'reason', type: 3, description: 'Reason for warning', required: true }
-            ]
-        },
-        {
-            name: 'fdo',
-            description: 'Force Delete Order (Manager)',
-            options: [
-                { name: 'id', type: 3, description: 'Order ID', required: true },
-                { name: 'reason', type: 3, description: 'Reason', required: true }
-            ]
-        },
-        {
-            name: 'vacation',
-            description: 'Request time off',
-            options: [
-                { name: 'days', type: 4, description: '1-14 Days', required: true },
-                { name: 'reason', type: 3, description: 'Reason', required: true }
-            ]
-        },
-        {
-            name: 'quota',
-            description: 'Check your weekly quota'
-        },
-        {
-            name: 'stats',
-            description: 'View staff stats',
-            options: [{ name: 'user', type: 6, description: 'Target user', required: false }]
-        },
-        {
-            name: 'rate',
-            description: 'Rate your order',
-            options: [
-                { name: 'id', type: 3, description: 'Order ID', required: true },
-                { name: 'stars', type: 4, description: '1-5 Stars', required: true }
-            ]
-        },
-        {
-            name: 'complain',
-            description: 'File a complaint',
-            options: [
-                { name: 'id', type: 3, description: 'Order ID', required: true },
-                { name: 'reason', type: 3, description: 'Reason', required: true }
-            ]
-        },
-        {
-            name: 'invite',
-            description: 'Get bot invite link'
-        },
-        {
-            name: 'redeem',
-            description: 'Redeem Premium Code',
-            options: [{ name: 'code', type: 3, description: 'VIP Code', required: true }]
-        },
-        {
-            name: 'generate_codes',
-            description: 'Owner Only: Generate codes',
-            options: [{ name: 'amount', type: 4, description: 'Amount', required: true }]
-        },
-        {
-            name: 'addvip',
-            description: 'Owner Only: Add VIP',
-            options: [{ name: 'user', type: 6, description: 'User', required: true }]
-        },
-        {
-            name: 'removevip',
-            description: 'Owner Only: Remove VIP',
-            options: [{ name: 'user', type: 6, description: 'User', required: true }]
-        },
-        {
-            name: 'unban',
-            description: 'Manager: Unban user',
-            options: [{ name: 'user', type: 6, description: 'User', required: true }]
-        },
-        {
-            name: 'rules',
-            description: 'View rules'
-        },
-        {
-            name: 'orderinfo',
-            description: 'View order details',
-            options: [{ name: 'id', type: 3, description: 'Order ID', required: true }]
-        }
-    ];
+    const cTarget = calculateTargets(totalCook, cooks.length);
+    const dTarget = calculateTargets(totalDel, deliverers.length);
 
-    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
-    try {
-        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Application Commands Registered.');
-    } catch (error) {
-        console.error(error);
-    }
+    let report = `📊 **Weekly Quota Report**\n`;
+    report += `🍩 Total Cooked: ${totalCook} | 🚴 Total Delivered: ${totalDel}\n`;
+    report += `**Targets:** Normal \`${cTarget.norm}\` | Senior \`${cTarget.senior}\`\n\n`;
 
-    // --- INTERVALS (CRON JOBS) ---
-    
-    // Auto Delivery (Every minute)
-    setInterval(async () => {
-        const threshold = new Date(Date.now() - 20 * 60000); // 20 mins ago
-        const overdue = await Order.find({ status: 'ready', ready_at: { $lt: threshold } });
-        
-        for (const o of overdue) {
-            try {
-                const guild = client.guilds.cache.get(o.guild_id);
-                if (guild) {
-                    const channel = guild.channels.cache.get(o.channel_id);
-                    if (channel) {
-                        let imgStr = o.images.length > 0 ? o.images.join('\n') : "";
-                        await channel.send(`<@${o.user_id}> 🤖 **Auto-Delivery**\nChef: ${o.chef_name}\n${imgStr}`);
-                        o.status = 'delivered';
-                        o.deliverer_id = 'AUTO_BOT';
-                        await o.save();
-                        updateMasterLog(o.order_id);
-                    }
-                }
-            } catch(e) {}
-        }
-    }, 60000);
+    // Cooks
+    report += `__**👨‍🍳 Kitchen Staff**__\n`;
+    for (const m of cooks) {
+        const u = await User.findOne({ user_id: m.id }) || new User({ user_id: m.id });
+        const isSenior = m.roles.cache.has(ROLES.SENIOR_COOK);
+        const target = isSenior ? cTarget.senior : cTarget.norm;
+        const done = u.cook_count_week;
+        const isBypass = m.roles.cache.has(ROLES.BYPASS);
 
-    // Auto Unclaim (Every minute)
-    setInterval(async () => {
-        const threshold = new Date(Date.now() - 4 * 60000);
-        const expired = await Order.find({ status: 'claimed', claimed_at: { $lt: threshold } });
-        const channel = client.channels.cache.get(CHANNELS.COOK);
-        
-        for (const o of expired) {
-            o.status = 'pending';
-            o.chef_name = null;
-            o.claimed_at = null;
-            await o.save();
-            updateMasterLog(o.order_id);
-            if(channel) channel.send(`📢 **Claim Expired!** \`${o.order_id}\` is **Pending** again.`);
-        }
-    }, 60000);
-
-    // Premium Expiry (Every Hour)
-    setInterval(async () => {
-        const now = new Date();
-        const expired = await PremiumUser.find({ is_vip: true, expires_at: { $lt: now } });
-        for (const u of expired) {
-            u.is_vip = false;
-            u.expires_at = null;
-            await u.save();
-            try {
-                const guild = client.guilds.cache.get(SUPPORT_SERVER_ID);
-                if(guild) {
-                    const member = await guild.members.fetch(u.user_id).catch(() => null);
-                    if(member) member.roles.remove(ROLES.VIP).catch(() => {});
-                }
-            } catch(e) {}
-        }
-    }, 3600000);
-
-    // Vacation Check (Every Hour)
-    setInterval(async () => {
-        const now = new Date();
-        const expired = await Vacation.find({ status: 'active', end_date: { $lt: now } });
-        for (const v of expired) {
-            v.status = 'expired';
-            await v.save();
-            // Remove bypass roles
-            for (const [id, guild] of client.guilds.cache) {
-                const member = await guild.members.fetch(v.user_id).catch(() => null);
-                if(member) {
-                    member.roles.remove(ROLES.BYPASS).catch(() => {});
-                    member.send("👋 **Welcome Back!** Your vacation has ended.").catch(()=>{});
-                }
+        if (isBypass) {
+            report += `🛡️ <@${m.id}>: Exempt (Vacation/Bypass)\n`;
+        } else if (done >= target) {
+            u.quota_fails_cook = 0;
+            report += `✅ <@${m.id}>: ${done}/${target} (Passed)\n`;
+        } else {
+            u.quota_fails_cook += 1;
+            if (u.quota_fails_cook >= 2) {
+                m.roles.remove(ROLES.COOK).catch(()=>{});
+                u.quota_fails_cook = 0;
+                report += `❌ <@${m.id}>: ${done}/${target} (**ROLE REMOVED** - 2nd Strike)\n`;
+            } else {
+                report += `⚠️ <@${m.id}>: ${done}/${target} (Strike ${u.quota_fails_cook}/2)\n`;
             }
         }
-    }, 3600000);
-});
+        u.cook_count_week = 0;
+        await u.save();
+    }
 
-// --- 6. INTERACTION HANDLER ---
+    // Delivery
+    report += `\n__**🚴 Delivery Staff**__\n`;
+    for (const m of deliverers) {
+        const u = await User.findOne({ user_id: m.id }) || new User({ user_id: m.id });
+        const isSenior = m.roles.cache.has(ROLES.SENIOR_DELIVERY);
+        const target = isSenior ? dTarget.senior : dTarget.norm;
+        const done = u.deliver_count_week;
+        const isBypass = m.roles.cache.has(ROLES.BYPASS);
 
+        if (isBypass) {
+            report += `🛡️ <@${m.id}>: Exempt (Vacation/Bypass)\n`;
+        } else if (done >= target) {
+            u.quota_fails_deliver = 0;
+            report += `✅ <@${m.id}>: ${done}/${target} (Passed)\n`;
+        } else {
+            u.quota_fails_deliver += 1;
+            if (u.quota_fails_deliver >= 2) {
+                m.roles.remove(ROLES.DELIVERY).catch(()=>{});
+                u.quota_fails_deliver = 0;
+                report += `❌ <@${m.id}>: ${done}/${target} (**ROLE REMOVED** - 2nd Strike)\n`;
+            } else {
+                report += `⚠️ <@${m.id}>: ${done}/${target} (Strike ${u.quota_fails_deliver}/2)\n`;
+            }
+        }
+        u.deliver_count_week = 0;
+        await u.save();
+    }
+
+    if (report.length > 2000) {
+        const chunks = report.match(/[\s\S]{1,2000}/g) || [];
+        for (const chunk of chunks) await quotaChannel.send(chunk);
+    } else {
+        await quotaChannel.send(report);
+    }
+}
+
+// --- 7. INTERACTIONS ---
 client.on('interactionCreate', async interaction => {
-    // --- MODAL HANDLING ---
-    if (interaction.isModalSubmit()) {
-        const [action, userId] = interaction.customId.split('_');
-        
-        if (action === 'vacEdit') {
-            const days = parseInt(interaction.fields.getTextInputValue('days'));
-            if (isNaN(days) || days < 1 || days > 14) return interaction.reply({ content: "❌ 1-14 days only.", ephemeral: true });
-
-            const endDate = new Date();
-            endDate.setDate(endDate.getDate() + days);
-
-            await Vacation.findOneAndUpdate(
-                { user_id: userId },
-                { status: 'active', end_date: endDate },
-                { upsert: true }
-            );
-
-            const guild = interaction.guild;
-            const target = await guild.members.fetch(userId).catch(() => null);
-            if (target) target.roles.add(ROLES.BYPASS).catch(() => {});
-
-            // Update Embed
-            const embed = EmbedBuilder.from(interaction.message.embeds[0])
-                .setColor(0x00FF00) // Green
-                .spliceFields(1, 1, { name: 'Duration', value: `${days} Days (Edited)`, inline: true })
-                .setFooter({ text: `Approved (Edited) by ${interaction.user.username}` });
-
-            await interaction.message.edit({ embeds: [embed], components: [] });
-            await interaction.reply({ content: `✅ Edited to ${days} days.`, ephemeral: true });
-        }
-        
-        if (action === 'vacDeny') {
-            const reason = interaction.fields.getTextInputValue('reason');
-            const embed = EmbedBuilder.from(interaction.message.embeds[0])
-                .setColor(0xFF0000)
-                .addFields({ name: 'Denial Reason', value: reason })
-                .setFooter({ text: `Denied by ${interaction.user.username}` });
-
-            await interaction.message.edit({ embeds: [embed], components: [] });
-            await interaction.reply({ content: "❌ Request Denied.", ephemeral: true });
-            
-            const target = await client.users.fetch(userId).catch(() => null);
-            if(target) target.send(`❌ **Vacation Denied**\nReason: ${reason}`).catch(() => {});
-        }
-        return;
-    }
-
-    // --- BUTTON HANDLING (Vacation) ---
-    if (interaction.isButton()) {
-        if (!isManager(interaction.member)) return interaction.reply({ content: "❌ Managers only.", ephemeral: true });
-        
-        const [action, userId, daysStr] = interaction.customId.split('_');
-        const days = parseInt(daysStr);
-
-        if (action === 'vacApprove') {
-            const endDate = new Date();
-            endDate.setDate(endDate.getDate() + days);
-
-            await Vacation.findOneAndUpdate(
-                { user_id: userId },
-                { status: 'active', end_date: endDate },
-                { upsert: true }
-            );
-
-            const target = await interaction.guild.members.fetch(userId).catch(() => null);
-            if (target) target.roles.add(ROLES.BYPASS).catch(() => {});
-
-            const embed = EmbedBuilder.from(interaction.message.embeds[0])
-                .setColor(0x00FF00)
-                .setFooter({ text: `Approved by ${interaction.user.username}` });
-
-            await interaction.message.edit({ embeds: [embed], components: [] });
-            await interaction.reply({ content: "✅ Approved.", ephemeral: true });
-            if(target) target.send(`🌴 **Approved!** Ends <t:${Math.floor(endDate.getTime()/1000)}:R>`).catch(() => {});
-        }
-
-        if (action === 'vacEditBtn') {
-            const modal = new ModalBuilder()
-                .setCustomId(`vacEdit_${userId}`)
-                .setTitle("Edit Duration");
-            const input = new TextInputBuilder()
-                .setCustomId('days')
-                .setLabel('New Days (1-14)')
-                .setStyle(TextInputStyle.Short);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await interaction.showModal(modal);
-        }
-
-        if (action === 'vacDenyBtn') {
-            const modal = new ModalBuilder()
-                .setCustomId(`vacDeny_${userId}`)
-                .setTitle("Deny Request");
-            const input = new TextInputBuilder()
-                .setCustomId('reason')
-                .setLabel('Reason')
-                .setStyle(TextInputStyle.Paragraph);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await interaction.showModal(modal);
-        }
-        return;
-    }
-
     if (!interaction.isChatInputCommand()) return;
-
     const { commandName } = interaction;
 
-    // --- COMMAND LOGIC ---
-
+    // --- ORDER ---
     if (commandName === 'order') {
         const item = interaction.options.getString('item');
-        const uid = interaction.user.id;
-
-        // Check Ban
-        const userConfig = await User.findOne({ user_id: uid });
-        if (userConfig) {
-            if (userConfig.is_banned === 1) return interaction.reply({ content: `🛑 **Permanently Banned.** Appeal: ${SUPPORT_SERVER_LINK}`, ephemeral: true });
-            if (userConfig.ban_expires_at && userConfig.ban_expires_at > new Date()) {
-                const ts = Math.floor(userConfig.ban_expires_at.getTime() / 1000);
-                return interaction.reply({ content: `🛑 **Temp Banned.** Return <t:${ts}:R>.`, ephemeral: true });
-            }
-        }
-
-        // Check active order
-        const active = await Order.findOne({ user_id: uid, status: { $in: ['pending', 'claimed', 'cooking', 'ready'] } });
+        const oid = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const u = await User.findOne({ user_id: interaction.user.id });
+        if(u && u.is_banned) return interaction.reply({content: '🛑 Banned.', ephemeral: true});
+        const active = await Order.findOne({ user_id: interaction.user.id, status: { $in: ['pending', 'claimed', 'cooking', 'ready'] } });
         if (active) return interaction.reply({ content: "❌ You already have an active order.", ephemeral: true });
 
-        // VIP Check
-        const vip = await PremiumUser.findOne({ user_id: uid, is_vip: true });
-        const oid = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const vipUser = await PremiumUser.findOne({ user_id: interaction.user.id, is_vip: true });
+        const isVip = !!vipUser;
 
-        const newOrder = new Order({
-            order_id: oid,
-            user_id: uid,
-            guild_id: interaction.guild.id,
-            channel_id: interaction.channel.id,
-            item: item,
-            is_vip: !!vip,
-            status: 'pending'
-        });
-        await newOrder.save();
+        await new Order({
+            order_id: oid, user_id: interaction.user.id, guild_id: interaction.guild.id,
+            channel_id: interaction.channel.id, item: item, is_vip: isVip
+        }).save();
+
         updateMasterLog(oid);
-
-        // Notify Kitchen
-        const cookChannel = client.channels.cache.get(CHANNELS.COOK);
-        if (cookChannel) {
-            const prefix = !!vip ? "💎 **VIP ORDER!**" : "🍩 **New Order!**";
-            const ping = !!vip ? "@here" : ""; 
-            await cookChannel.send(`${prefix} \`${oid}\`\nClient: <@${uid}>\nRequest: **${item}**\n📍 Server: ${interaction.guild.name}\n${ping}`);
+        const channel = client.channels.cache.get(CHANNELS.COOK);
+        if(channel) {
+            const ping = isVip ? "@here" : "";
+            const emoji = isVip ? "💎 **VIP ORDER!**" : "🍩 **New Order!**";
+            channel.send(`${ping} ${emoji} \`${oid}\`\nUser: <@${interaction.user.id}>\nItem: **${item}**`);
         }
-        return interaction.reply({ content: `✅ Order \`${oid}\` placed!`, ephemeral: true });
+        await interaction.reply({ content: `✅ Order \`${oid}\` placed!`, ephemeral: true });
     }
 
+    // --- CLAIM ---
     if (commandName === 'claim') {
-        if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Staff only.", ephemeral: true });
-        if (interaction.channel.id !== CHANNELS.COOK && !isManager(interaction.member)) return interaction.reply({ content: "❌ Wrong channel.", ephemeral: true });
-
+        if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
         const oid = interaction.options.getString('id');
         const order = await Order.findOne({ order_id: oid });
-
-        if (!order || order.status !== 'pending') return interaction.reply({ content: "❌ Cannot claim.", ephemeral: true });
-
+        if(!order || order.status !== 'pending') return interaction.reply({content: '❌ Invalid.', ephemeral: true});
         order.status = 'claimed';
         order.chef_name = interaction.user.username;
-        order.claimed_at = new Date();
         await order.save();
         updateMasterLog(oid);
-
-        interaction.reply({ content: `⏱️ Claimed \`${oid}\`. Cook within 4 minutes.` });
-        
-        try {
-            const u = await client.users.fetch(order.user_id);
-            u.send(`👨‍🍳 **Claimed!** Your order \`${oid}\` is being prepped by **${interaction.user.username}**.`);
-        } catch(e) {}
+        try { (await client.users.fetch(order.user_id)).send(`👨‍🍳 Chef **${interaction.user.username}** claimed order \`${oid}\`.`); } catch(e){}
+        await interaction.reply(`👨‍🍳 Claimed \`${oid}\`.`);
     }
 
+    // --- COOK ---
     if (commandName === 'cook') {
-        if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Staff only.", ephemeral: true });
-        
+        if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
         const oid = interaction.options.getString('id');
-        const img = interaction.options.getAttachment('image');
-        const ex1 = interaction.options.getAttachment('extra1');
-
+        const img1 = interaction.options.getAttachment('image');
+        const img2 = interaction.options.getAttachment('image2');
+        const img3 = interaction.options.getAttachment('image3');
         const order = await Order.findOne({ order_id: oid });
-        if (!order) return interaction.reply({ content: "❌ Not found.", ephemeral: true });
-        if (order.status !== 'claimed' || order.chef_name !== interaction.user.username) return interaction.reply({ content: "❌ Not your claim.", ephemeral: true });
-
-        const images = [img.url];
-        if (ex1) images.push(ex1.url);
-
-        order.status = 'cooking';
-        order.images = images;
-        await order.save();
-
-        // Update User Stats
-        await User.findOneAndUpdate({ user_id: interaction.user.id }, { $inc: { cook_count_week: 1, cook_count_total: 1 } }, { upsert: true });
-
-        updateMasterLog(oid);
-        await interaction.reply(`👨‍🍳 Cooking \`${oid}\`... (3m)`);
+        if(!order || order.status !== 'claimed') return interaction.reply({content: '❌ Invalid.', ephemeral: true});
         
-        // Notify User
-        try {
-            const finishTs = Math.floor((Date.now() + 180000) / 1000);
-            const u = await client.users.fetch(order.user_id);
-            u.send(`🍳 **Cooking!** Ready <t:${finishTs}:R>.`);
-        } catch(e) {}
-
-        // Timer
-        setTimeout(async () => {
-            const o = await Order.findOne({ order_id: oid });
-            if (o && o.status === 'cooking') {
-                o.status = 'ready';
-                o.ready_at = new Date();
-                await o.save();
-                updateMasterLog(oid);
-                
-                const dc = client.channels.cache.get(CHANNELS.DELIVERY);
-                if(dc) dc.send(`📦 **Ready!** \`${oid}\`\nChef: ${interaction.user.username}\nUse \`/deliver ${oid}\``);
-                
-                try {
-                    const u = await client.users.fetch(order.user_id);
-                    u.send(`📦 **Ready!** Waiting for delivery.`);
-                } catch(e) {}
-            }
-        }, 180000); // 3 mins
+        order.status = 'ready'; order.ready_at = new Date(); order.images = [img1.url];
+        if(img2) order.images.push(img2.url); if(img3) order.images.push(img3.url);
+        await order.save();
+        
+        await User.findOneAndUpdate({ user_id: interaction.user.id }, { $inc: { cook_count_week: 1, cook_count_total: 1 } }, { upsert: true });
+        updateMasterLog(oid);
+        const dc = client.channels.cache.get(CHANNELS.DELIVERY);
+        if(dc) dc.send(`📦 **Ready!** \`${oid}\`\nChef: ${interaction.user.username}\nUse \`/deliver ${oid}\``);
+        try { (await client.users.fetch(order.user_id)).send(`📦 Order \`${oid}\` is cooked! Waiting for driver.`); } catch(e){}
+        await interaction.reply(`✅ Cooked \`${oid}\`.`);
     }
 
+    // --- SET SCRIPT ---
+    if (commandName === 'setscript') {
+        const msg = interaction.options.getString('message');
+        await Script.findOneAndUpdate({ user_id: interaction.user.id }, { script: msg }, { upsert: true });
+        await interaction.reply({ content: "✅ Script saved.", ephemeral: true });
+    }
+
+    // --- DELIVER ---
     if (commandName === 'deliver') {
-        if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Staff only.", ephemeral: true });
-        
+        if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
         const oid = interaction.options.getString('id');
         const order = await Order.findOne({ order_id: oid });
-
-        if (!order || order.status !== 'ready') return interaction.reply({ content: "❌ Not ready.", ephemeral: true });
+        if(!order || order.status !== 'ready') return interaction.reply({content: '❌ Not ready.', ephemeral: true});
 
         const scriptDoc = await Script.findOne({ user_id: interaction.user.id });
         const script = scriptDoc ? scriptDoc.script : "Here is your order! 🍩";
-        const imgs = order.images.join('\n');
-        
-        // Try Invite
         const guild = client.guilds.cache.get(order.guild_id);
-        if (!guild) return interaction.reply({ content: "❌ I'm not in that server.", ephemeral: true });
-
-        let invite = null;
-        const targetChannel = guild.channels.cache.get(order.channel_id);
-        if (targetChannel) {
-            try { invite = await targetChannel.createInvite({ maxAge: 300, maxUses: 1 }); } catch(e) {}
-        }
-
-        if (invite) {
-            try {
-                await interaction.user.send(`🚴 **Delivery** \`${oid}\`\n**Link:** ${invite.url}\n**Post:**\n\`\`\`\n<@${order.user_id}> ${script}\nChef: ${order.chef_name}\n${imgs}\n\`\`\``);
-                
-                order.status = 'delivered';
-                order.deliverer_id = interaction.user.id;
-                await order.save();
-
-                await User.findOneAndUpdate({ user_id: interaction.user.id }, { $inc: { deliver_count_week: 1, deliver_count_total: 1 } }, { upsert: true });
-                updateMasterLog(oid);
-                
-                interaction.reply({ content: "✅ Check DMs.", ephemeral: true });
-            } catch (e) {
-                interaction.reply({ content: "❌ Open DMs.", ephemeral: true });
-            }
+        const channel = guild?.channels.cache.get(order.channel_id);
+        
+        if(channel) {
+            await channel.send(`<@${order.user_id}> 🚴 **Order Delivered!**\nChef: ${order.chef_name}\n**Message:** ${script}\n${order.images.join('\n')}`);
+            order.status = 'delivered'; await order.save();
+            await User.findOneAndUpdate({ user_id: interaction.user.id }, { $inc: { deliver_count_week: 1, deliver_count_total: 1 } }, { upsert: true });
+            updateMasterLog(oid);
+            await interaction.reply({content: '✅ Delivered!', ephemeral: true});
         } else {
-             // Fallback Auto
-             if (targetChannel) {
-                targetChannel.send(`🤖 **Auto-Delivery** (Invite Failed)\n<@${order.user_id}> ${script}\nChef: ${order.chef_name}\n${imgs}`);
-                order.status = 'delivered';
-                order.deliverer_id = 'AUTO_FALLBACK';
-                await order.save();
-                updateMasterLog(oid);
-                interaction.reply({ content: "⚠️ Invite failed. Auto-delivered.", ephemeral: true });
-             } else {
-                interaction.reply({ content: "❌ Server locked down.", ephemeral: true });
-             }
+            await interaction.reply({content: '❌ Could not reach channel.', ephemeral: true});
         }
     }
 
-    if (commandName === 'vacation') {
-        if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Staff only.", ephemeral: true });
+    // --- QUOTA COMMAND (UPDATED) ---
+    if (commandName === 'quota') {
+        if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
         
-        const days = interaction.options.getInteger('days');
-        const reason = interaction.options.getString('reason');
+        const guild = interaction.guild;
+        const cookRole = guild.roles.cache.get(ROLES.COOK);
+        const delRole = guild.roles.cache.get(ROLES.DELIVERY);
+        await guild.members.fetch(); 
+        const cooks = cookRole ? cookRole.members.size : 1;
+        const deliverers = delRole ? delRole.members.size : 1;
 
-        if (days < 1 || days > 14) return interaction.reply({ content: "❌ 1-14 days.", ephemeral: true });
+        // Calculate Dynamic Targets Live
+        const allUsers = await User.find({});
+        let totalCook = 0; let totalDel = 0;
+        allUsers.forEach(u => { totalCook += u.cook_count_week; totalDel += u.deliver_count_week; });
 
-        const existing = await Vacation.findOne({ user_id: interaction.user.id, status: 'active' });
-        if (existing) return interaction.reply({ content: "❌ Active vacation exists.", ephemeral: true });
+        const cTarget = calculateTargets(totalCook, cooks);
+        const dTarget = calculateTargets(totalDel, deliverers);
+
+        const u = await User.findOne({ user_id: interaction.user.id }) || {};
+        const isCook = interaction.member.roles.cache.has(ROLES.COOK);
+        const isDel = interaction.member.roles.cache.has(ROLES.DELIVERY);
+        
+        let msg = `📊 **Current Quota Status**\n`;
+        if (isCook) {
+            const target = interaction.member.roles.cache.has(ROLES.SENIOR_COOK) ? cTarget.senior : cTarget.norm;
+            const status = (u.cook_count_week >= target) ? "✅" : "⚠️";
+            msg += `👨‍🍳 Cooking: **${u.cook_count_week || 0} / ${target}** ${status}\n`;
+        }
+        if (isDel) {
+            const target = interaction.member.roles.cache.has(ROLES.SENIOR_DELIVERY) ? dTarget.senior : dTarget.norm;
+            const status = (u.deliver_count_week >= target) ? "✅" : "⚠️";
+            msg += `🚴 Delivery: **${u.deliver_count_week || 0} / ${target}** ${status}\n`;
+        }
+        await interaction.reply({ content: msg, ephemeral: true });
+    }
+
+    // --- STATS COMMAND (UPDATED) ---
+    if (commandName === 'stats') {
+        if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
+        
+        const target = interaction.options.getUser('user') || interaction.user;
+        const u = await User.findOne({ user_id: target.id }) || {};
+        
+        // Calculate Rating
+        const ratedOrders = await Order.find({ deliverer_id: target.id, rating: { $exists: true } });
+        let avgRating = "N/A";
+        if (ratedOrders.length > 0) {
+            const sum = ratedOrders.reduce((a, b) => a + b.rating, 0);
+            avgRating = (sum / ratedOrders.length).toFixed(1) + " ⭐";
+        }
 
         const embed = new EmbedBuilder()
-            .setTitle("🌴 Vacation Request")
-            .setColor(0x1abc9c)
+            .setTitle(`📈 Stats: ${target.username}`)
+            .setColor(0x9b59b6)
+            .setThumbnail(target.displayAvatarURL())
             .addFields(
-                { name: 'Staff', value: `<@${interaction.user.id}>`, inline: true },
-                { name: 'Duration', value: `${days} Days`, inline: true },
-                { name: 'Reason', value: reason }
+                { name: "👨‍🍳 Cooking", value: `Weekly: ${u.cook_count_week || 0}\nLifetime: ${u.cook_count_total || 0}`, inline: true },
+                { name: "🚴 Delivery", value: `Weekly: ${u.deliver_count_week || 0}\nLifetime: ${u.deliver_count_total || 0}`, inline: true },
+                { name: "⭐ Rating", value: avgRating, inline: false }
             );
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`vacApprove_${interaction.user.id}_${days}`).setLabel('Approve').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`vacEditBtn_${interaction.user.id}_${days}`).setLabel('Edit').setStyle(ButtonStyle.Primary),
-            new ButtonBuilder().setCustomId(`vacDenyBtn_${interaction.user.id}_${days}`).setLabel('Deny').setStyle(ButtonStyle.Danger)
-        );
-
-        const channel = client.channels.cache.get(CHANNELS.VACATION);
-        if(channel) await channel.send({ embeds: [embed], components: [row] });
-        interaction.reply({ content: "✅ Request sent.", ephemeral: true });
+        await interaction.reply({ embeds: [embed] });
     }
-
-    if (commandName === 'warn' || commandName === 'fdo') {
-        if (!isManager(interaction.member) && !isStaff(interaction.member)) return interaction.reply({ content: "❌ Perms.", ephemeral: true });
-        
+    
+    // --- RATE ---
+    if (commandName === 'rate') {
         const oid = interaction.options.getString('id');
-        const reason = interaction.options.getString('reason');
-        const order = await Order.findOne({ order_id: oid });
+        const stars = interaction.options.getInteger('stars');
+        const order = await Order.findOne({ order_id: oid, user_id: interaction.user.id });
         
-        if (!order) return interaction.reply("❌ Invalid ID.");
+        if(!order || order.status !== 'delivered') return interaction.reply({content: "❌ Not delivered.", ephemeral: true});
         
-        const isFdo = commandName === 'fdo';
-        order.status = isFdo ? 'cancelled_fdo' : 'cancelled_warn';
+        order.rating = stars;
         await order.save();
         updateMasterLog(oid);
 
-        const u = await User.findOneAndUpdate({ user_id: order.user_id }, { $inc: { warnings: 1 } }, { new: true, upsert: true });
-        
-        let banMsg = "";
-        if (u.warnings === 3) {
-            const exp = new Date(); exp.setDate(exp.getDate() + 7);
-            u.ban_expires_at = exp;
-            banMsg = "\n⏳ **7-DAY BAN**";
-        } else if (u.warnings === 6) {
-            const exp = new Date(); exp.setDate(exp.getDate() + 30);
-            u.ban_expires_at = exp;
-            banMsg = "\n⏳ **30-DAY BAN**";
-        } else if (u.warnings >= 9) {
-            u.is_banned = 1;
-            banMsg = "\n🛑 **PERMANENT BAN**";
-        }
-        await u.save();
-
-        const warnChan = client.channels.cache.get(CHANNELS.WARNING);
-        if(warnChan) warnChan.send(`⚠️ **Warned** <@${order.user_id}> | Reason: ${reason} | Strikes: ${u.warnings} ${banMsg}`);
-        
-        try {
-            const target = await client.users.fetch(order.user_id);
-            target.send(`⚠️ **Warning**\nReason: ${reason}\nStrikes: ${u.warnings}${banMsg}`);
-        } catch(e){}
-
-        interaction.reply(`Action taken. Strikes: ${u.warnings}`);
+        const chan = client.channels.cache.get(CHANNELS.RATINGS);
+        if(chan) chan.send(`${"⭐".repeat(stars)} **Rating!** \`${oid}\`\nChef: ${order.chef_name}\nDeliverer: <@${order.deliverer_id}>`);
+        await interaction.reply({content: "Thank you!", ephemeral: true});
     }
 
+    // --- OTHER STANDARD COMMANDS ---
     if (commandName === 'invite') {
-        const link = client.generateInvite({
-            scopes: ['bot', 'applications.commands'],
+        const link = client.generateInvite({ 
+            scopes: ['bot', 'applications.commands'], 
             permissions: [
-                PermissionsBitField.Flags.SendMessages,
-                PermissionsBitField.Flags.EmbedLinks,
-                PermissionsBitField.Flags.AttachFiles,
+                PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages,
+                PermissionsBitField.Flags.EmbedLinks, PermissionsBitField.Flags.AttachFiles,
+                PermissionsBitField.Flags.UseExternalEmojis, PermissionsBitField.Flags.ReadMessageHistory,
                 PermissionsBitField.Flags.CreateInstantInvite
-            ]
+            ] 
         });
-        const embed = new EmbedBuilder().setTitle(`Invite ${BRAND_NAME}`).setDescription("Click button below").setColor(BRAND_COLOR);
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Invite Me").setStyle(ButtonStyle.Link).setURL(link));
-        interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+        await interaction.reply({ content: `🔗 **Invite Me:** [Click Here](${link})`, ephemeral: true });
     }
-
     if (commandName === 'generate_codes') {
-        if (interaction.user.id !== ROLES.OWNER) return interaction.reply("❌ Owner only.");
+        if(interaction.user.id !== ROLES.OWNER) return interaction.reply('❌ Owner only.');
         const amount = interaction.options.getInteger('amount');
-        if (amount < 1 || amount > 50) return interaction.reply("1-50 only.");
-        
-        let txt = "";
-        for (let i=0; i<amount; i++) {
-            const c = generateCode();
-            await new PremiumCode({ code: c, created_by: interaction.user.id }).save();
-            txt += c + "\n";
-        }
-        
-        interaction.reply({ files: [{ attachment: Buffer.from(txt), name: 'codes.txt' }], ephemeral: true });
+        let txt = ""; for(let i=0; i<amount; i++) { const c = generateCode(); await new PremiumCode({ code: c, created_by: interaction.user.id }).save(); txt += c + "\n"; }
+        await interaction.reply({ files: [{ attachment: Buffer.from(txt), name: 'codes.txt' }], ephemeral: true });
     }
-
     if (commandName === 'redeem') {
-        const codeStr = interaction.options.getString('code');
-        const code = await PremiumCode.findOneAndUpdate(
-            { code: codeStr, status: 'unused' },
-            { status: 'redeemed', redeemed_by: interaction.user.id, redeemed_at: new Date() }
-        );
-
-        if (!code) return interaction.reply({ content: "❌ Invalid code.", ephemeral: true });
-
-        const exp = new Date();
-        exp.setDate(exp.getDate() + 30);
-        
-        await PremiumUser.findOneAndUpdate(
-            { user_id: interaction.user.id },
-            { is_vip: true, expires_at: exp, redeemed_code: codeStr },
-            { upsert: true }
-        );
-
-        // Add Role
-        try {
-            const guild = client.guilds.cache.get(SUPPORT_SERVER_ID);
-            const member = await guild.members.fetch(interaction.user.id);
-            member.roles.add(ROLES.VIP);
-        } catch(e) {}
-
-        interaction.reply({ content: "💎 **VIP Activated** for 30 days!", ephemeral: true });
+        const code = interaction.options.getString('code');
+        const valid = await PremiumCode.findOneAndUpdate({ code: code, status: 'unused' }, { status: 'redeemed' });
+        if(!valid) return interaction.reply({content: '❌ Invalid code.', ephemeral: true});
+        await PremiumUser.findOneAndUpdate({ user_id: interaction.user.id }, { is_vip: true, expires_at: new Date(Date.now() + 30*24*60*60*1000) }, { upsert: true });
+        try { (await client.guilds.cache.get(SUPPORT_SERVER_ID).members.fetch(interaction.user.id)).roles.add(ROLES.VIP); } catch(e){}
+        await interaction.reply({content: '💎 **VIP Redeemed!**', ephemeral: true});
     }
-
+    if (commandName === 'orderlist') {
+        const active = await Order.find({ status: { $in: ['pending', 'claimed', 'cooking', 'ready'] } }).sort({ is_vip: -1, created_at: 1 });
+        let msg = "**🍩 Queue:**\n"; if (active.length === 0) msg = "Queue empty.";
+        active.forEach(o => { const vip = o.is_vip ? "💎" : ""; msg += `${vip}\`${o.order_id}\`: **${o.status.toUpperCase()}** (${o.item})\n`; });
+        await interaction.reply({ content: msg.substring(0, 2000), ephemeral: true });
+    }
+    if (commandName === 'unclaim') {
+        const oid = interaction.options.getString('id');
+        const order = await Order.findOne({ order_id: oid });
+        if(!order || order.status !== 'claimed') return interaction.reply({content: '❌ Not claimed.', ephemeral: true});
+        if(order.chef_name !== interaction.user.username && !isManager(interaction.member)) return interaction.reply({content: '❌ Not yours.', ephemeral: true});
+        order.status = 'pending'; order.chef_name = null; await order.save(); updateMasterLog(oid); await interaction.reply(`🔓 Unclaimed \`${oid}\`.`);
+    }
+    if (commandName === 'warn' || commandName === 'fdo') {
+        if(!isManager(interaction.member)) return interaction.reply({content: '❌ Managers only.', ephemeral: true});
+        const oid = interaction.options.getString('id'); const reason = interaction.options.getString('reason');
+        const order = await Order.findOne({ order_id: oid }); if(!order) return interaction.reply("❌ Invalid.");
+        order.status = commandName === 'fdo' ? 'cancelled_fdo' : 'cancelled_warn'; await order.save(); updateMasterLog(oid);
+        const u = await User.findOneAndUpdate({ user_id: order.user_id }, { $inc: { warnings: 1 } }, { new: true, upsert: true });
+        if(u.warnings >= 3) { u.is_banned = 1; await u.save(); }
+        await interaction.reply(`Action taken. Strikes: ${u.warnings}`);
+    }
+    if (commandName === 'runquota') {
+        if(!interaction.member.roles.cache.has(ROLES.MANAGER) && interaction.user.id !== ROLES.OWNER) return interaction.reply({ content: '❌ Manager only.', ephemeral: true});
+        await interaction.deferReply({ ephemeral: true }); await runQuotaLogic(interaction.guild); await interaction.editReply("✅ Quota run forced.");
+    }
     if (commandName === 'rules') {
-        const embed = new EmbedBuilder().setTitle(`${BRAND_NAME} Rules`).setColor(BRAND_COLOR)
-            .addFields(
-                { name: "1. The Golden Rule", value: "**Every order MUST include a donut.**" },
-                { name: "2. Conduct", value: "No NSFW." },
-                { name: "3. Queue", value: "1 Active order at a time." },
-                { name: "4. Max Items", value: "3 Items per order." }
-            );
-        interaction.reply({ embeds: [embed] });
+        const embed = new EmbedBuilder().setTitle(`${BRAND_NAME} Rules`).setColor(BRAND_COLOR).addFields({ name: "1. The Golden Rule", value: "**Every order MUST include a donut.**" }, { name: "2. Conduct", value: "No NSFW." }, { name: "3. Queue", value: "1 Active order at a time." }, { name: "4. Max Items", value: "3 Items per order." });
+        await interaction.reply({ embeds: [embed] });
+    }
+    if (commandName === 'complain') {
+        const oid = interaction.options.getString('id'); const reason = interaction.options.getString('reason');
+        const order = await Order.findOne({ order_id: oid }); if(!order) return interaction.reply("❌ Invalid.");
+        const chan = client.channels.cache.get(CHANNELS.COMPLAINT); if(chan) chan.send(`🚨 **Complaint** \`${oid}\`\nUser: <@${interaction.user.id}>\nReason: ${reason}`);
+        await interaction.reply({content: "Sent.", ephemeral: true});
+    }
+    if (commandName === 'unban') {
+        if(!isManager(interaction.member)) return interaction.reply({content: '❌ Managers only.', ephemeral: true});
+        const target = interaction.options.getUser('user');
+        await User.findOneAndUpdate({ user_id: target.id }, { is_banned: 0, warnings: 0 });
+        await interaction.reply(`✅ Unbanned ${target.username}.`);
     }
 });
 
