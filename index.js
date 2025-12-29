@@ -2,24 +2,22 @@
  * ============================================================================
  * SUGAR RUSH - MASTER DISCORD AUTOMATION INFRASTRUCTURE
  * ============================================================================
- * * VERSION: 66.0.0 (COMPLETE COMMAND INTEGRATION FIX)
+ * * VERSION: 76.0.0 (RANK-BASED QUOTA LOGIC ADDED)
  * * ----------------------------------------------------------------------------
- * 🍩 BUG FIX REPORT:
- * - Fixed "Is Thinking" hang by implementing logic for all 26 commands.
- * - Added missing handlers: /balance, /stats, /ban, /unban, /refund, /vacation.
- * - Unified Error Handling to catch crashes before they stall the bot.
+ * 🍩 QUOTA SYSTEM UPDATES:
+ * - Trainee (Cook/Delivery): Fixed Target = 5.
+ * - Senior (Cook/Delivery): Target = 50% of Global Quota.
+ * - Standard Staff: Target = 100% of Global Quota.
+ * - Vacation: Exempt.
  * ----------------------------------------------------------------------------
- * 🍩 SYSTEM SPECS:
- * - Economy: 100 Std / 50 VIP / 150 Super Order.
- * - 3/6/9 Warning System: Auto-Bans based on strike count.
- * - User Notifications: DMs users upon disciplinary action.
- * - Store: https://donuts.sell.app/
+ * 🍩 CORE SPECS:
+ * - Economy: 100/50 (Std) | 150/75 (Super).
+ * - Priority Queues: Super > VIP > Standard.
+ * - Smart Dispatch: Invite -> Auto-Delivery Fallback.
  * ============================================================================
  */
 
-
 require('dotenv').config();
-
 
 const { 
     Client, 
@@ -32,20 +30,13 @@ const {
     ActivityType 
 } = require('discord.js');
 
-
 const mongoose = require('mongoose');
-
-
 const { google } = require('googleapis');
-
-
 const util = require('util');
 
-
 // ============================================================================
-// [SECTION 1] CONFIGURATION VARIABLES
+// [1] CONFIGURATION & CONSTANTS
 // ============================================================================
-
 
 const CONF_TOKEN = process.env.DISCORD_TOKEN;
 const CONF_MONGO = process.env.MONGO_URI;
@@ -53,15 +44,21 @@ const CONF_SHEET = process.env.GOOGLE_SHEET_ID;
 const CONF_OWNER = '662655499811946536';
 const CONF_HQ_ID = '1454857011866112063';
 const CONF_STORE = "https://donuts.sell.app/";
-const CONF_INVITE = "https://discord.gg/Q4DsEbJzBJ";
+const CONF_SUPPORT_SERVER = "https://discord.gg/Q4DsEbJzBJ";
 
-
+// ROLES (PLEASE UPDATE THE NEW IDs)
 const ROLE_COOK = '1454877400729911509';
 const ROLE_DELIVERY = '1454877287953469632';
 const ROLE_MANAGER = '1454876343878549630';
 const ROLE_QUOTA_EXEMPT = '1454936082591252534';
 
+// NEW ROLES (Add your IDs here)
+const ROLE_TRAINEE_COOK = 'REPLACE_WITH_TRAINEE_COOK_ID';
+const ROLE_TRAINEE_DELIVERY = 'REPLACE_WITH_TRAINEE_DELIVERY_ID';
+const ROLE_SENIOR_COOK = 'REPLACE_WITH_SENIOR_COOK_ID';
+const ROLE_SENIOR_DELIVERY = 'REPLACE_WITH_SENIOR_DELIVERY_ID';
 
+// CHANNELS
 const CHAN_COOK = '1454879418999767122';
 const CHAN_DELIVERY = '1454880879741767754';
 const CHAN_BACKUP = '1454888266451910901';
@@ -71,16 +68,15 @@ const CHAN_BLACKLIST = '1455092188626292852';
 const CHAN_VACATION = '1454886383662665972';
 const CHAN_RATINGS = '1454884136740327557';
 
-
-const COLOR_MAIN = 0xFFA500;
-const COLOR_SUCCESS = 0x2ECC71;
-const COLOR_FAIL = 0xFF0000;
-
+// COLORS
+const COLOR_MAIN = 0xFFA500;   // Orange (Standard)
+const COLOR_VIP = 0xF1C40F;    // Gold (VIP)
+const COLOR_FAIL = 0xFF0000;   // Red (Super/Error)
+const COLOR_SUCCESS = 0x2ECC71; // Green
 
 // ============================================================================
-// [SECTION 2] MONGODB SCHEMAS
+// [2] DATABASE SCHEMAS
 // ============================================================================
-
 
 const UserSchema = new mongoose.Schema({
     user_id: { type: String, required: true, unique: true },
@@ -97,13 +93,12 @@ const UserSchema = new mongoose.Schema({
     warnings: { type: Number, default: 0 }
 });
 
-
 const OrderSchema = new mongoose.Schema({
     order_id: String,
     user_id: String,
     guild_id: String,
     channel_id: String,
-    status: { type: String, default: 'pending' },
+    status: { type: String, default: 'pending' }, 
     item: String,
     is_vip: { type: Boolean, default: false },
     is_super: { type: Boolean, default: false },
@@ -116,18 +111,15 @@ const OrderSchema = new mongoose.Schema({
     backup_msg_id: String
 });
 
-
 const VIPCodeSchema = new mongoose.Schema({
     code: { type: String, unique: true },
     is_used: { type: Boolean, default: false }
 });
 
-
 const ScriptSchema = new mongoose.Schema({
     user_id: String,
     script: String
 });
-
 
 const BlacklistSchema = new mongoose.Schema({
     guild_id: String,
@@ -135,24 +127,20 @@ const BlacklistSchema = new mongoose.Schema({
     authorized_by: String
 });
 
-
 const User = mongoose.model('User', UserSchema);
 const Order = mongoose.model('Order', OrderSchema);
 const VIPCode = mongoose.model('VIPCode', VIPCodeSchema);
 const Script = mongoose.model('Script', ScriptSchema);
 const ServerBlacklist = mongoose.model('ServerBlacklist', BlacklistSchema);
 
-
 // ============================================================================
-// [SECTION 3] HELPER FUNCTIONS
+// [3] HELPER FUNCTIONS
 // ============================================================================
-
 
 const auth = new google.auth.GoogleAuth({
     keyFile: 'credentials.json',
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
 });
-
 
 async function fetchRules() {
     try {
@@ -164,7 +152,6 @@ async function fetchRules() {
     } catch (e) { return "System Syncing..."; }
 }
 
-
 function createEmbed(title, description, color = COLOR_MAIN, fields = []) {
     return new EmbedBuilder()
         .setAuthor({ name: "Sugar Rush" })
@@ -175,7 +162,6 @@ function createEmbed(title, description, color = COLOR_MAIN, fields = []) {
         .setTimestamp()
         .addFields(fields);
 }
-
 
 async function checkPermissions(userId) {
     if (userId === CONF_OWNER) return { isOwner: true, isManager: true, isCook: true, isDelivery: true, isStaff: true };
@@ -195,19 +181,24 @@ async function checkPermissions(userId) {
     } catch (err) { return { isOwner: false, isManager: false, isCook: false, isDelivery: false, isStaff: false }; }
 }
 
-
 async function updateOrderArchive(orderId) {
     try {
         const channel = await client.channels.fetch(CHAN_BACKUP).catch(() => null);
         const order = await Order.findOne({ order_id: orderId });
         if (!channel || !order) return;
-        const embed = createEmbed(`Archive: #${order.order_id}`, null, order.is_super ? COLOR_FAIL : COLOR_MAIN, [
+        
+        let color = COLOR_MAIN;
+        if (order.is_super) color = COLOR_FAIL;
+        else if (order.is_vip) color = COLOR_VIP;
+
+        const embed = createEmbed(`Archive: #${order.order_id}`, null, color, [
             { name: 'Status', value: `\`${order.status.toUpperCase()}\``, inline: true },
             { name: 'Customer', value: `<@${order.user_id}>`, inline: true },
             { name: 'Chef', value: order.chef_name || 'Pending', inline: true },
             { name: 'Courier', value: order.deliverer_id ? `<@${order.deliverer_id}>` : 'Pending', inline: true }
         ]);
         if (order.images?.length > 0) embed.setImage(order.images[0]);
+        
         if (!order.backup_msg_id) {
             const msg = await channel.send({ embeds: [embed] });
             order.backup_msg_id = msg.id;
@@ -218,7 +209,6 @@ async function updateOrderArchive(orderId) {
         }
     } catch (error) {}
 }
-
 
 async function applyWarningLogic(user) {
     user.warnings += 1;
@@ -237,62 +227,109 @@ async function applyWarningLogic(user) {
     return punishment;
 }
 
+// --- RANK-BASED QUOTA LOGIC ---
+async function executeQuotaRun(interaction) {
+    await interaction.deferReply();
+    const users = await User.find({ $or: [{ cook_count_week: { $gt: 0 } }, { deliver_count_week: { $gt: 0 } }] });
+    const totalDeliveries = users.reduce((acc, u) => acc + u.deliver_count_week, 0);
+    const totalDishes = users.reduce((acc, u) => acc + u.cook_count_week, 0);
+    
+    // Calculate Standard Global Quota
+    const activeStaffCount = Math.max(1, users.length);
+    let globalQuota = Math.ceil((totalDishes + totalDeliveries) / activeStaffCount);
+    if (globalQuota < 5) globalQuota = 5;
+    if (globalQuota > 30) globalQuota = 30;
+
+    const topCooks = [...users].sort((a, b) => b.cook_count_week - a.cook_count_week).slice(0, 3);
+    const topCouriers = [...users].sort((a, b) => b.deliver_count_week - a.deliver_count_week).slice(0, 3);
+
+    let failCount = 0;
+    const supportGuild = interaction.guild;
+
+    for (const u of users) {
+        let quotaTarget = globalQuota;
+        let isExempt = false;
+
+        try {
+            const member = await supportGuild.members.fetch(u.user_id);
+            const roles = member.roles.cache;
+
+            // Logic Tree for Quota Assignment
+            if (roles.has(ROLE_QUOTA_EXEMPT)) {
+                isExempt = true;
+            } else if (roles.has(ROLE_TRAINEE_COOK) || roles.has(ROLE_TRAINEE_DELIVERY)) {
+                quotaTarget = 5; // Trainee Fixed
+            } else if (roles.has(ROLE_SENIOR_COOK) || roles.has(ROLE_SENIOR_DELIVERY)) {
+                quotaTarget = Math.ceil(globalQuota / 2); // Senior 50%
+            }
+        } catch (e) {
+            // User left server, keep standard quota
+        }
+
+        const totalWork = u.cook_count_week + u.deliver_count_week;
+        
+        if (!isExempt && totalWork < quotaTarget) {
+            u.warnings += 1;
+            failCount++;
+        }
+        
+        // Reset
+        u.cook_count_week = 0;
+        u.deliver_count_week = 0;
+        await u.save();
+    }
+
+    const embed = createEmbed("📊 Weekly Quota Audit", `**Global Target:** ${globalQuota}\n**Failed:** ${failCount}`, COLOR_MAIN);
+    embed.addFields(
+        { name: "👨‍🍳 Top Chefs", value: topCooks.map((u, i) => `${i+1}. <@${u.user_id}> (${u.cook_count_week})`).join('\n') || "None" },
+        { name: "🚴 Top Couriers", value: topCouriers.map((u, i) => `${i+1}. <@${u.user_id}> (${u.deliver_count_week})`).join('\n') || "None" },
+        { name: "ℹ️ Logic", value: "Trainee: 5 | Senior: 50% | Std: 100%" }
+    );
+    client.channels.cache.get(CHAN_QUOTA)?.send({ content: "@here 📢 **WEEKLY AUDIT**", embeds: [embed] });
+    return interaction.editReply({ content: "✅ Quota Run Successful.", embeds: [embed] });
+}
 
 // ============================================================================
-// [SECTION 4] CLIENT LOGIC
+// [4] CLIENT LOGIC
 // ============================================================================
-
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.GuildMessages, 
-        GatewayIntentBits.MessageContent, 
-        GatewayIntentBits.DirectMessages
-    ],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages],
     partials: [Partials.Channel, Partials.Message]
 });
 
-
 client.once('ready', async () => {
-    console.log(`[SYSTEM] Sugar Rush v66.0.0 Online.`);
+    console.log(`[SYSTEM] Sugar Rush v76.0.0 Online.`);
     await mongoose.connect(CONF_MONGO);
     client.user.setPresence({ activities: [{ name: '/order | Sugar Rush', type: ActivityType.Playing }], status: 'online' });
     setInterval(runOrderFailsafe, 60000);
 });
 
-
 async function runOrderFailsafe() {
-    const timeLimit = new Date(Date.now() - 1200000); 
-    const staleOrders = await Order.find({ status: 'ready', ready_at: { $lt: timeLimit } });
-    for (const order of staleOrders) {
+    const limit = new Date(Date.now() - 1200000); 
+    const staled = await Order.find({ status: 'ready', ready_at: { $lt: limit } });
+    for (const o of staled) {
         try {
-            const guild = client.guilds.cache.get(order.guild_id);
-            const channel = guild?.channels.cache.get(order.channel_id);
-            if (channel) {
+            const guild = client.guilds.cache.get(o.guild_id);
+            const chan = guild?.channels.cache.get(o.channel_id);
+            if (chan) {
                 const embed = createEmbed("🍩 Auto-Dispatch System", "Order finalized by HQ protocols.", COLOR_MAIN);
-                if (order.images?.length > 0) embed.setImage(order.images[0]);
-                await channel.send({ content: `<@${order.user_id}>`, embeds: [embed] });
-                order.status = 'delivered';
-                order.deliverer_id = 'SYSTEM_FAILSAFE';
-                await order.save();
-                updateOrderArchive(order.order_id);
+                if (o.images?.length > 0) embed.setImage(o.images[0]);
+                await chan.send({ content: `<@${o.user_id}>`, embeds: [embed] });
+                o.status = 'delivered'; o.deliverer_id = 'SYSTEM_FAILSAFE'; await o.save();
+                updateOrderArchive(o.order_id);
             }
         } catch (e) {}
     }
 }
 
-
 // ============================================================================
-// [SECTION 5] INTERACTION ROUTER & COMMANDS
+// [5] INTERACTION ROUTER
 // ============================================================================
-
 
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    // Button Handling for Vacation
     if (interaction.isButton()) {
         const perms = await checkPermissions(interaction.user.id);
         if (!perms.isManager) return interaction.reply({ content: "Unauthorized.", ephemeral: true });
@@ -313,16 +350,19 @@ client.on('interactionCreate', async (interaction) => {
     const perms = await checkPermissions(interaction.user.id);
     const userData = await User.findOne({ user_id: interaction.user.id }) || new User({ user_id: interaction.user.id });
 
-    const publicCmds = ['help', 'order', 'super_order', 'orderstatus', 'daily', 'balance', 'premium', 'redeem', 'review', 'tip', 'invite', 'support', 'rules'];
-    if (commandName !== 'deliver') await interaction.deferReply({ ephemeral: !publicCmds.includes(commandName) });
+    // Deferral Logic
+    const publicCmds = ['help', 'order', 'super_order', 'orderstatus', 'orderinfo', 'daily', 'balance', 'premium', 'redeem', 'review', 'tip', 'invite', 'support', 'rules'];
+    const noDefer = ['deliver', 'run_quota']; 
+    if (!noDefer.includes(commandName)) await interaction.deferReply({ ephemeral: !publicCmds.includes(commandName) });
 
+    // Ban Gate
     if (userData.is_perm_banned || (userData.service_ban_until > Date.now())) {
-        if (commandName !== 'deliver') return interaction.editReply(`❌ **Banned.** Appeal: ${CONF_INVITE}`);
-        return interaction.reply({ content: "❌ Banned.", ephemeral: true });
+        const msg = `❌ **Banned.** Appeal: ${CONF_SUPPORT_SERVER}`;
+        if (!noDefer.includes(commandName)) return interaction.editReply(msg);
+        return interaction.reply({ content: msg, ephemeral: true });
     }
 
     // --- OWNER COMMANDS ---
-
     if (commandName === 'generate_codes') {
         if (!perms.isOwner) return interaction.editReply("❌ Owner Only.");
         const amt = options.getInteger('amount');
@@ -333,7 +373,7 @@ client.on('interactionCreate', async (interaction) => {
             codes.push(c);
         }
         await interaction.user.send({ embeds: [createEmbed("Keys", codes.join('\n'), COLOR_SUCCESS)] });
-        return interaction.editReply("✅ Codes generated.");
+        return interaction.editReply("✅ Generated.");
     }
 
     if (commandName === 'serverblacklist') {
@@ -343,8 +383,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // --- DISCIPLINARY TRIAD ---
-
-    if (commandName === 'warn' || commandName === 'fdo' || commandName === 'force_warn') {
+    if (['warn', 'fdo', 'force_warn'].includes(commandName)) {
         const isFdo = commandName === 'fdo';
         const isForce = commandName === 'force_warn';
         
@@ -355,10 +394,8 @@ client.on('interactionCreate', async (interaction) => {
         const order = await Order.findOne({ order_id: oid });
 
         if (!order) return interaction.editReply("❌ Invalid Order.");
-        
-        // Status checks
-        if (commandName === 'warn' && !['pending', 'claimed'].includes(order.status)) return interaction.editReply("❌ Warn is for Pending/Claimed only.");
-        if (isFdo && order.status !== 'ready') return interaction.editReply("❌ FDO is for Ready orders only.");
+        if (commandName === 'warn' && !['pending', 'claimed'].includes(order.status)) return interaction.editReply("❌ Pending/Claimed only.");
+        if (isFdo && order.status !== 'ready') return interaction.editReply("❌ Ready orders only.");
 
         const target = await User.findOne({ user_id: order.user_id }) || new User({ user_id: order.user_id });
         const pen = await applyWarningLogic(target);
@@ -367,91 +404,113 @@ client.on('interactionCreate', async (interaction) => {
         if (isFdo) order.status = 'cancelled_fdo';
         if (!isForce) await order.save();
 
-        const logChan = client.channels.cache.get(CHAN_WARNINGS);
-        if (logChan) logChan.send({ embeds: [createEmbed("⚠️ Discipline Issued", `**Cmd:** /${commandName}\n**ID:** ${oid}\n**User:** <@${order.user_id}>\n**Penalty:** ${pen}`, COLOR_FAIL)] });
-
+        client.channels.cache.get(CHAN_WARNINGS)?.send({ embeds: [createEmbed("⚠️ Discipline Issued", `**Cmd:** /${commandName}\n**User:** <@${order.user_id}>\n**Penalty:** ${pen}`, COLOR_FAIL)] });
         try {
             const u = await client.users.fetch(order.user_id);
-            await u.send({ embeds: [createEmbed("⚠️ Violation Notice", `**Reason:** ${reason}\n**Penalty:** ${pen}\n**Appeal:** ${CONF_INVITE}`, COLOR_FAIL)] });
+            await u.send({ embeds: [createEmbed("⚠️ Violation Notice", `**Reason:** ${reason}\n**Penalty:** ${pen}\n**Appeal:** ${CONF_SUPPORT_SERVER}`, COLOR_FAIL)] });
         } catch (e) {}
 
         return interaction.editReply(`✅ Executed. Penalty: **${pen}**`);
     }
 
-    // --- MANAGEMENT COMMANDS ---
+    // --- MANAGEMENT ---
+    if (commandName === 'run_quota') {
+        if (!perms.isManager) return interaction.reply({ content: "❌ Management Only.", ephemeral: true });
+        return executeQuotaRun(interaction);
+    }
 
     if (commandName === 'ban' || commandName === 'unban' || commandName === 'refund') {
         if (!perms.isManager) return interaction.editReply("❌ Management Only.");
-        
         if (commandName === 'ban') {
             const u = await User.findOne({ user_id: options.getString('uid') }) || new User({ user_id: options.getString('uid') });
             u.service_ban_until = new Date(Date.now() + (options.getInteger('days') * 86400000));
             await u.save();
-            return interaction.editReply("✅ User Banned.");
+            return interaction.editReply("✅ Banned.");
         }
         if (commandName === 'unban') {
             const u = await User.findOne({ user_id: options.getString('uid') });
             if (u) { u.service_ban_until = null; u.is_perm_banned = false; u.warnings = 0; await u.save(); }
-            return interaction.editReply("✅ User Unbanned.");
+            return interaction.editReply("✅ Unbanned.");
         }
         if (commandName === 'refund') {
             const o = await Order.findOne({ order_id: options.getString('id') });
-            if (!o) return interaction.editReply("❌ Invalid Order.");
+            if (!o) return interaction.editReply("❌ Invalid.");
             const u = await User.findOne({ user_id: o.user_id });
             const cost = o.is_super ? 150 : (o.is_vip ? 50 : 100);
-            u.balance += cost;
-            o.status = 'refunded';
+            u.balance += cost; o.status = 'refunded';
             await u.save(); await o.save();
-            return interaction.editReply("✅ Refund Processed.");
+            return interaction.editReply("✅ Refunded.");
         }
     }
 
     // --- CONSUMER ---
-
-    if (commandName === 'balance') {
-        return interaction.editReply({ embeds: [createEmbed("💰 Vault", `Balance: **${userData.balance}**`)] });
-    }
-
+    if (commandName === 'balance') return interaction.editReply({ embeds: [createEmbed("💰 Vault", `Balance: **${userData.balance}**`)] });
+    
     if (commandName === 'orderstatus') {
         const active = await Order.findOne({ user_id: interaction.user.id, status: { $in: ['pending', 'claimed', 'cooking', 'ready'] } });
         if (!active) return interaction.editReply("❌ No active orders.");
         return interaction.editReply({ embeds: [createEmbed("🍩 Status", `**ID:** ${active.order_id}\n**State:** ${active.status.toUpperCase()}`)] });
     }
 
+    if (commandName === 'orderinfo') {
+        const o = await Order.findOne({ order_id: options.getString('id') });
+        if (!o) return interaction.editReply("❌ Not Found.");
+        let col = COLOR_MAIN; let tier = "Standard";
+        if (o.is_super) { col = COLOR_FAIL; tier = "🚀 Super"; } else if (o.is_vip) { col = COLOR_VIP; tier = "👑 VIP"; }
+        const emb = createEmbed("🧾 Details", `ID: \`${o.order_id}\``, col, [
+            { name: "Item", value: o.item, inline: true }, { name: "Status", value: o.status.toUpperCase(), inline: true },
+            { name: "Tier", value: tier, inline: true }, { name: "Customer", value: `<@${o.user_id}>`, inline: true },
+            { name: "Chef", value: o.chef_name || "Pending", inline: true }, { name: "Courier", value: o.deliverer_id ? `<@${o.deliverer_id}>` : "Pending", inline: true }
+        ]);
+        if (o.images?.length > 0) emb.setImage(o.images[0]);
+        return interaction.editReply({ embeds: [emb] });
+    }
+
     if (commandName === 'review') {
-        const rating = options.getInteger('rating');
-        const comm = options.getString('comment');
-        const chan = client.channels.cache.get(CHAN_RATINGS);
-        if (chan) chan.send({ embeds: [createEmbed("⭐ New Review", `**User:** <@${interaction.user.id}>\n**Rating:** ${rating}/5\n**Comment:** ${comm}`)] });
+        client.channels.cache.get(CHAN_RATINGS)?.send({ embeds: [createEmbed("⭐ New Review", `**User:** <@${interaction.user.id}>\n**Rating:** ${options.getInteger('rating')}/5\n**Comment:** ${options.getString('comment')}`)] });
         return interaction.editReply("✅ Review Submitted.");
     }
 
-    if (commandName === 'invite') return interaction.editReply(CONF_INVITE);
-    if (commandName === 'support') return interaction.editReply(CONF_INVITE);
+    if (commandName === 'invite') {
+        const url = `https://discord.com/api/oauth2/authorize?client_id=${client.user.id}&permissions=117761&scope=bot%20applications.commands`;
+        return interaction.editReply({ embeds: [createEmbed("🤖 Invite", `**[Click to Invite](${url})**`, COLOR_MAIN, [{name:"Perms", value:"Create Invite, Read/Send/Embed"}])] });
+    }
+
+    if (commandName === 'premium') {
+        return interaction.editReply({ embeds: [createEmbed("💎 Premium", `**[Premium Shop](${CONF_STORE})**`, COLOR_MAIN, [{name:"Perks", value:"50% Off Orders, 2x Daily Coins"}])] });
+    }
+
+    if (commandName === 'support') return interaction.editReply(`🍩 HQ: ${CONF_SUPPORT_SERVER}`);
     if (commandName === 'rules') return interaction.editReply({ embeds: [createEmbed("📖 Rules", await fetchRules())] });
     
     if (commandName === 'tip') {
         const amt = options.getInteger('amount');
         if (userData.balance < amt) return interaction.editReply("❌ Insufficient Funds.");
-        const target = await User.findOne({ user_id: options.getUser('user').id }) || new User({ user_id: options.getUser('user').id });
-        userData.balance -= amt;
-        target.balance += Math.floor(amt * 0.5); // 50% Tax/Burn logic implied from prompts
-        await userData.save(); await target.save();
-        return interaction.editReply(`✅ Tipped **${amt}**. Target received 50%.`);
+        const t = await User.findOne({ user_id: options.getUser('user').id }) || new User({ user_id: options.getUser('user').id });
+        userData.balance -= amt; t.balance += Math.floor(amt * 0.5); 
+        await userData.save(); await t.save();
+        return interaction.editReply(`✅ Tipped **${amt}**. Target got 50%.`);
     }
 
-    // --- ORDERING & REDEEM --- (Logic identical to previous versions, just condensed for space in this specific block)
-    
     if (commandName === 'order' || commandName === 'super_order') {
+        const isVip = userData.vip_until > Date.now();
         const isSuper = commandName === 'super_order';
-        const cost = isSuper ? 150 : (userData.vip_until > Date.now() ? 50 : 100);
-        if (userData.balance < cost) return interaction.editReply("❌ Funds Low.");
+        let cost = isSuper ? 150 : 100;
+        if (isVip) cost = Math.ceil(cost * 0.5); 
+        
+        if (userData.balance < cost) return interaction.editReply(`❌ Need ${cost} Coins.`);
         const oid = Math.random().toString(36).substring(2, 8).toUpperCase();
-        await new Order({ order_id: oid, user_id: interaction.user.id, guild_id: interaction.guildId, channel_id: interaction.channelId, item: options.getString('item'), is_vip: userData.vip_until > Date.now(), is_super: isSuper }).save();
+        
+        await new Order({ order_id: oid, user_id: interaction.user.id, guild_id: interaction.guildId, channel_id: interaction.channelId, item: options.getString('item'), is_vip: isVip, is_super: isSuper }).save();
         userData.balance -= cost; await userData.save();
-        client.channels.cache.get(CHAN_COOK)?.send({ content: isSuper ? "@here 🚀" : null, embeds: [createEmbed("New Order", `ID: ${oid}\nItem: ${options.getString('item')}`)] });
+        
+        let title = "🍩 New Order", col = COLOR_MAIN, content = null, recTitle = "✅ Order Authorized";
+        if (isSuper) { title = "🚀 SUPER ORDER"; col = COLOR_FAIL; content = "@here 🚀 **PRIORITY**"; recTitle = "🚀 SUPER ORDER CONFIRMED"; }
+        else if (isVip) { title = "👑 VIP Order"; col = COLOR_VIP; recTitle = "👑 VIP Order Authorized"; }
+
+        client.channels.cache.get(CHAN_COOK)?.send({ content: content, embeds: [createEmbed(title, `ID: ${oid}\nItem: ${options.getString('item')}`, col)] });
         updateOrderArchive(oid);
-        return interaction.editReply({ embeds: [createEmbed("✅ Authorized", `ID: \`${oid}\``, COLOR_SUCCESS)] });
+        return interaction.editReply({ embeds: [createEmbed(recTitle, `Reference ID: \`${oid}\``, col)] });
     }
 
     if (commandName === 'redeem') {
@@ -460,9 +519,8 @@ client.on('interactionCreate', async (interaction) => {
         const now = new Date();
         const add = 30 * 86400000;
         userData.vip_until = new Date((userData.vip_until > now ? userData.vip_until.getTime() : now.getTime()) + add);
-        code.is_used = true;
-        await userData.save(); await code.save();
-        return interaction.editReply(`✅ VIP Extended to: ${userData.vip_until.toDateString()}`);
+        code.is_used = true; await userData.save(); await code.save();
+        return interaction.editReply(`✅ VIP Extended: ${userData.vip_until.toDateString()}`);
     }
 
     if (commandName === 'daily') {
@@ -473,7 +531,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // --- STAFF: KITCHEN ---
-
     if (commandName === 'claim') {
         if (!perms.isCook) return interaction.editReply("❌ Cooks Only.");
         const o = await Order.findOne({ order_id: options.getString('id'), status: 'pending' });
@@ -481,6 +538,24 @@ client.on('interactionCreate', async (interaction) => {
         o.status = 'claimed'; o.chef_id = interaction.user.id; o.chef_name = interaction.user.username; await o.save();
         updateOrderArchive(o.order_id);
         return interaction.editReply(`👨‍🍳 Claimed: ${o.order_id}`);
+    }
+
+    if (commandName === 'orderlist') {
+        if (!perms.isCook) return interaction.editReply("❌ Cooks Only.");
+        const orders = await Order.find({ status: 'pending' });
+        if (!orders.length) return interaction.editReply("✅ No pending orders.");
+        
+        orders.sort((a, b) => {
+            const scoreA = (a.is_super ? 2 : 0) + (a.is_vip ? 1 : 0);
+            const scoreB = (b.is_super ? 2 : 0) + (b.is_vip ? 1 : 0);
+            return scoreA !== scoreB ? scoreB - scoreA : a.created_at - b.created_at;
+        });
+
+        const list = orders.slice(0, 20).map((o, i) => {
+            let icon = "🍩"; if (o.is_super) icon = "🚀"; else if (o.is_vip) icon = "👑";
+            return `\`${i+1}.\` ${icon} **${o.item}** (ID: \`${o.order_id}\`)`;
+        }).join('\n');
+        return interaction.editReply({ embeds: [createEmbed("👨‍🍳 Kitchen Queue", list)] });
     }
 
     if (commandName === 'cook') {
@@ -502,6 +577,23 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // --- STAFF: LOGISTICS ---
+    if (commandName === 'deliverylist') {
+        if (!perms.isDelivery) return interaction.editReply("❌ Delivery Only.");
+        const orders = await Order.find({ status: 'ready' });
+        if (!orders.length) return interaction.editReply("✅ No orders ready.");
+
+        orders.sort((a, b) => {
+            const scoreA = (a.is_super ? 2 : 0) + (a.is_vip ? 1 : 0);
+            const scoreB = (b.is_super ? 2 : 0) + (b.is_vip ? 1 : 0);
+            return scoreA !== scoreB ? scoreB - scoreA : a.created_at - b.created_at;
+        });
+
+        const list = orders.slice(0, 20).map((o, i) => {
+            let icon = "📦"; if (o.is_super) icon = "🚀"; else if (o.is_vip) icon = "👑";
+            return `\`${i+1}.\` ${icon} **${o.item}** (ID: \`${o.order_id}\`) • <@${o.user_id}>`;
+        }).join('\n');
+        return interaction.editReply({ embeds: [createEmbed("🚴 Dispatch Queue", list)] });
+    }
 
     if (commandName === 'deliver') {
         if (!perms.isDelivery) return interaction.reply({ content: "❌ Delivery Only.", ephemeral: true });
@@ -512,15 +604,20 @@ client.on('interactionCreate', async (interaction) => {
         if (!guild || !channel) return interaction.reply({ content: "❌ Destination Lost.", ephemeral: true });
 
         if (!guild.members.cache.has(interaction.user.id)) {
-            const invite = await channel.createInvite({ maxAge: 1800, maxUses: 1 }).catch(() => null);
-            if (!invite) return interaction.reply({ content: "❌ Invite Error.", ephemeral: true });
-            const script = await Script.findOne({ user_id: interaction.user.id });
-            const cust = await client.users.fetch(o.user_id);
-            await interaction.user.send({ embeds: [createEmbed("🚴 Briefing", `**Guild:** ${guild.name}\n**Link:** ${invite.url}\n**Customer:** <@${cust.id}>`, COLOR_MAIN)] });
-            return interaction.reply({ content: "📫 Briefing Sent.", ephemeral: true });
+            try {
+                const invite = await channel.createInvite({ maxAge: 1800, maxUses: 1 });
+                const script = await Script.findOne({ user_id: interaction.user.id });
+                const cust = await client.users.fetch(o.user_id);
+                await interaction.user.send({ embeds: [createEmbed("🚴 Briefing", `**Guild:** ${guild.name}\n**Link:** ${invite.url}\n**Customer:** <@${cust.id}>`, COLOR_MAIN)] });
+                return interaction.reply({ content: "📫 Briefing Sent.", ephemeral: true });
+            } catch (e) {
+                await interaction.deferReply({ ephemeral: true });
+                await interaction.editReply("⚠️ Invite Failed. Auto-Delivering...");
+            }
+        } else {
+             await interaction.deferReply({ ephemeral: true });
         }
 
-        await interaction.deferReply({ ephemeral: true });
         const script = await Script.findOne({ user_id: interaction.user.id });
         await channel.send({ content: `<@${o.user_id}>`, embeds: [createEmbed("🚴 Delivery", script?.script || "Enjoy!").setImage(o.images[0])] });
         o.status = 'delivered'; o.deliverer_id = interaction.user.id; await o.save();
@@ -536,7 +633,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // --- STAFF: UTILS ---
-
     if (commandName === 'stats') {
         const target = options.getUser('user') || interaction.user;
         const tData = await User.findOne({ user_id: target.id });
@@ -550,8 +646,7 @@ client.on('interactionCreate', async (interaction) => {
             new ButtonBuilder().setCustomId(`approve_${interaction.user.id}_${days}`).setLabel('Approve').setStyle(ButtonStyle.Success),
             new ButtonBuilder().setCustomId(`deny_${interaction.user.id}`).setLabel('Deny').setStyle(ButtonStyle.Danger)
         );
-        const vChan = client.channels.cache.get(CHAN_VACATION);
-        if (vChan) vChan.send({ embeds: [createEmbed("Vacation Request", `<@${interaction.user.id}> for ${days} days.`)], components: [row] });
+        client.channels.cache.get(CHAN_VACATION)?.send({ embeds: [createEmbed("Vacation Request", `<@${interaction.user.id}> for ${days} days.`)], components: [row] });
         return interaction.editReply("✅ Request Sent.");
     }
 
@@ -562,10 +657,9 @@ client.on('interactionCreate', async (interaction) => {
         await userData.save();
         return interaction.editReply("✅ Double Stats Active (30 Days).");
     }
-
 });
 
-// --- OWNER EVAL ---
+// OWNER EVAL
 client.on('messageCreate', async (m) => {
     if (m.author.bot || !m.content.startsWith("!eval") || m.author.id !== CONF_OWNER) return;
     try { m.channel.send(`\`\`\`js\n${util.inspect(await eval(m.content.slice(5)), {depth:0})}\n\`\`\``); } catch (e) { m.channel.send(`${e}`); }
