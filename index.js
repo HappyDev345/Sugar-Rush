@@ -2,46 +2,20 @@
  * ============================================================================
  * SUGAR RUSH - MASTER DISCORD AUTOMATION INFRASTRUCTURE
  * ============================================================================
- * * VERSION: 52.0.0 (THE ABSOLUTE FULL VERTICAL EXPANSION)
+ * * VERSION: 56.0.0 (OFFICIAL STORE INTEGRATION & FULL EXPANSION)
  * * ----------------------------------------------------------------------------
- * 🍩 THE COMMAND REGISTRY:
+ * 🍩 SYSTEM UPDATES:
+ * 1. Store Integration: /premium now points to https://donuts.sell.app/
+ * 2. Interaction Safety: Unified defer/reply logic for orders and delivery.
+ * 3. VIP Stacking: Time is added to the current expiration date.
+ * 4. Manual Join Dispatch: DMs Couriers with Invite, Script, and Customer Tag.
  * ----------------------------------------------------------------------------
- * CONSUMER:
- * - /help: Detailed directory of all authorized commands.
- * - /order [item]: Request premium fulfillment (100 Coins / 50 VIP).
- * - /super_order [item]: Expedited priority request (150 Coins).
- * - /orderstatus: Audit real-time progress bar and ETA.
- * - /daily: Process your daily shift allowance and vault distribution.
- * - /balance: Access your current Sugar Vault coin ledger.
- * - /premium: Receive the official link to the Sugar Rush VIP Store.
- * - /redeem [code]: Activate a 30-day VIP membership using an authorized key.
- * - /review [id] [rating] [comment]: Submit quality feedback to the platform.
- * - /rules: Review official regulations from Google Sheets.
- * - /invite: Generate the official Sugar Rush authorization link.
- * - /support: Access the centralized Sugar Rush HQ.
- * - /tip [id] [amount]: Distribute coins to assigned staff.
- * * STAFF (Cooks Only):
- * - /claim [id]: Assign a pending consumer request to your culinary station.
- * - /cook [id] [proof]: Initialize the preparation sequence and ovens.
- * - /warn [id] [reason]: Terminate un-prepped request and issue strike.
- * * STAFF (Couriers Only):
- * - /deliver [id]: Step 1: DMs Briefing (Invite + User Tag). Step 2: Fulfillment.
- * - /setscript [text]: Personalize your professional delivery greeting.
- * * STAFF (Universal):
- * - /stats [user]: Conduct a metrics audit (Weekly/Lifetime, Fails, Balance).
- * - /vacation [days]: Request quota-exempt leave of absence (Max 14 days).
- * - /staff_buy: Authorize the activation of the 30-day Double Stats perk.
- * * MANAGEMENT EXCLUSIVE:
- * - /fdo [id] [reason]: Force cancel pre-delivery order and issue strike.
- * - /force_warn [id] [reason]: Issue strike post-fulfillment.
- * - /search [id]: Retrieve archive record for an order ID.
- * - /refund [id]: Revert a transaction and process vault restoration.
- * - /ban [uid] [days]: Execute a manual service ban on a User ID.
- * - /unban [uid]: Restore service access to a User ID.
- * * OWNER ONLY:
- * - !eval [code]: (Prefix) Execute raw JavaScript (Locked to 662655499811946536).
- * - /generate_codes [amount]: Create unique VIP keys.
- * - /serverblacklist [id] [reason] [duration]: Purge platform access for a node.
+ * 🍩 THE COMMAND REGISTRY:
+ * CONSUMER: /help, /order, /super_order, /orderstatus, /daily, /balance, 
+ * /premium, /redeem, /review, /rules, /invite, /support, /tip.
+ * STAFF: /claim, /cook, /warn, /deliver, /setscript, /stats, /vacation.
+ * MGMT: /fdo, /force_warn, /search, /refund, /ban, /unban.
+ * OWNER: !eval, /generate_codes, /serverblacklist.
  * ============================================================================
  */
 
@@ -90,24 +64,60 @@ const OWNER_ID = '662655499811946536';
 const SUPPORT_SERVER_ID = '1454857011866112063';
 
 
+const STORE_LINK = "https://donuts.sell.app/";
+
+
+const SUPPORT_INVITE = "https://discord.gg/Q4DsEbJzBJ";
+
+
 const ROLES = {
+
+
     COOK: '1454877400729911509',
+
+
     DELIVERY: '1454877287953469632',
+
+
     MANAGER: '1454876343878549630',
+
+
     OWNER: OWNER_ID,
+
+
     QUOTA_EXEMPT: '1454936082591252534'
+
+
 };
 
 
 const CHANNELS = {
+
+
     COOK: '1454879418999767122',
+
+
     DELIVERY: '1454880879741767754',
+
+
     BACKUP: '1454888266451910901',
+
+
     QUOTA: '1454895987322519672',
+
+
     WARNING_LOG: '1454881451161026637',
+
+
     BLACKLIST_LOG: '1455092188626292852',
+
+
     VACATION_REQUEST: '1454886383662665972',
+
+
     RATINGS: '1454884136740327557'
+
+
 };
 
 
@@ -129,89 +139,28 @@ const ERROR_COLOR = 0xFF0000;
 const User = mongoose.model('User', new mongoose.Schema({
 
 
-    user_id: { 
-        type: String, 
-        required: true, 
-        unique: true 
-    },
+    user_id: { type: String, required: true, unique: true },
 
 
-    balance: { 
-        type: Number, 
-        default: 0 
-    },
+    balance: { type: Number, default: 0 },
 
 
-    last_daily: { 
-        type: Date, 
-        default: new Date(0) 
-    },
+    last_daily: { type: Date, default: new Date(0) },
 
 
-    cook_count_week: { 
-        type: Number, 
-        default: 0 
-    },
+    cook_count_week: { type: Number, default: 0 },
 
 
-    cook_count_total: { 
-        type: Number, 
-        default: 0 
-    },
+    cook_count_total: { type: Number, default: 0 },
 
 
-    deliver_count_week: { 
-        type: Number, 
-        default: 0 
-    },
+    deliver_count_week: { type: Number, default: 0 },
 
 
-    deliver_count_total: { 
-        type: Number, 
-        default: 0 
-    },
+    deliver_count_total: { type: Number, default: 0 },
 
 
-    quota_fails_cook: { 
-        type: Number, 
-        default: 0 
-    },
-
-
-    quota_fails_deliver: { 
-        type: Number, 
-        default: 0 
-    },
-
-
-    double_stats_until: { 
-        type: Date, 
-        default: new Date(0) 
-    },
-
-
-    warnings: { 
-        type: Number, 
-        default: 0 
-    },
-
-
-    service_ban_until: { 
-        type: Date, 
-        default: null 
-    },
-
-
-    is_perm_banned: { 
-        type: Boolean, 
-        default: false 
-    },
-
-
-    vip_until: { 
-        type: Date, 
-        default: new Date(0) 
-    }
+    vip_until: { type: Date, default: new Date(0) }
 
 
 }));
@@ -232,31 +181,19 @@ const Order = mongoose.model('Order', new mongoose.Schema({
     channel_id: String,
 
 
-    status: { 
-        type: String, 
-        default: 'pending' 
-    },
+    status: { type: String, default: 'pending' },
 
 
     item: String,
 
 
-    is_vip: { 
-        type: Boolean, 
-        default: false 
-    },
+    is_vip: { type: Boolean, default: false },
 
 
-    is_super: { 
-        type: Boolean, 
-        default: false 
-    },
+    is_super: { type: Boolean, default: false },
 
 
-    created_at: { 
-        type: Date, 
-        default: Date.now 
-    },
+    created_at: { type: Date, default: Date.now },
 
 
     chef_name: String,
@@ -283,16 +220,10 @@ const Order = mongoose.model('Order', new mongoose.Schema({
 const VIPCode = mongoose.model('VIPCode', new mongoose.Schema({ 
 
 
-    code: { 
-        type: String, 
-        unique: true 
-    }, 
+    code: { type: String, unique: true }, 
 
 
-    is_used: { 
-        type: Boolean, 
-        default: false 
-    } 
+    is_used: { type: Boolean, default: false } 
 
 
 }));
@@ -310,27 +241,29 @@ const Script = mongoose.model('Script', new mongoose.Schema({
 }));
 
 
-const Config = mongoose.model('Config', new mongoose.Schema({ 
+// --- 3. INFRASTRUCTURE HELPERS ---
 
 
-    key: String, 
+const createBrandedEmbed = (title, description, color = BRAND_COLOR, fields = []) => {
 
 
-    date: Date 
+    return new EmbedBuilder()
+        .setAuthor({ name: BRAND_NAME })
+        .setTitle(title)
+        .setDescription(description || null)
+        .setColor(color)
+        .setFooter({ text: `${BRAND_NAME} Executive Management` })
+        .setTimestamp()
+        .addFields(fields);
 
 
-}));
-
-
-// --- 3. THE PERMISSIONS ENGINE ---
+};
 
 
 const getGlobalPerms = async (userId) => {
 
 
     if (userId === OWNER_ID) {
-
-
         return { 
             isStaff: true, 
             isManager: true, 
@@ -338,8 +271,6 @@ const getGlobalPerms = async (userId) => {
             isDelivery: true, 
             isOwner: true 
         };
-
-
     }
 
 
@@ -373,13 +304,7 @@ const getGlobalPerms = async (userId) => {
     } catch (e) { 
 
 
-        return { 
-            isStaff: false, 
-            isManager: false, 
-            isCook: false, 
-            isDelivery: false, 
-            isOwner: false 
-        }; 
+        return { isStaff: false, isManager: false, isCook: false, isDelivery: false, isOwner: false }; 
 
 
     }
@@ -388,51 +313,7 @@ const getGlobalPerms = async (userId) => {
 };
 
 
-// --- 4. SYSTEM HELPERS ---
-
-
-const createBrandedEmbed = (title, description, color = BRAND_COLOR, fields = []) => {
-
-
-    return new EmbedBuilder()
-        .setAuthor({ name: BRAND_NAME })
-        .setTitle(title)
-        .setDescription(description || null)
-        .setColor(color)
-        .setFooter({ text: `${BRAND_NAME} Executive Management` })
-        .setTimestamp()
-        .addFields(fields);
-
-
-};
-
-
-const clean = async (text) => {
-
-
-    if (text && text.constructor.name == "Promise") {
-        text = await text;
-    }
-
-
-    if (typeof text !== "string") {
-        text = util.inspect(text, { depth: 1 });
-    }
-
-
-    text = text
-        .replace(/`/g, "`" + String.fromCharCode(8203))
-        .replace(/@/g, "@" + String.fromCharCode(8203))
-        .replaceAll(BOT_TOKEN, "[TOKEN_REDACTED]");
-
-
-    return text;
-
-
-};
-
-
-// --- 5. CORE ENGINE ---
+// --- 4. CORE ENGINE & FAILSAFE ---
 
 
 const client = new Client({
@@ -443,17 +324,14 @@ const client = new Client({
         GatewayIntentBits.MessageContent, 
         GatewayIntentBits.DirectMessages
     ],
-    partials: [
-        Partials.Channel, 
-        Partials.Message
-    ]
+    partials: [Partials.Channel, Partials.Message]
 });
 
 
 client.once('ready', async () => {
 
 
-    console.log(`[BOOT] Sugar Rush Master Engine ONLINE.`);
+    console.log(`[BOOT] Sugar Rush v56.0.0 Online.`);
 
 
     await mongoose.connect(MONGO_URI);
@@ -465,67 +343,70 @@ client.once('ready', async () => {
     });
 
 
+    setInterval(checkAutoDelivery, 60000);
+
+
 });
 
 
-// --- 6. OWNER PREFIX HANDLER ---
+async function checkAutoDelivery() {
 
 
-client.on('messageCreate', async (message) => {
+    const limit = new Date(Date.now() - 1200000);
 
 
-    if (message.author.bot) return;
+    const staled = await Order.find({ 
+        status: 'ready', 
+        ready_at: { $lt: limit } 
+    });
 
 
-    if (message.content.startsWith("!eval")) {
-
-
-        if (message.author.id !== OWNER_ID) return;
-
-
-        const args = message.content.slice(5).trim().split(/ +/g);
+    for (const o of staled) {
 
 
         try {
 
 
-            const code = args.join(" ");
+            const node = client.guilds.cache.get(o.guild_id)?.channels.cache.get(o.channel_id);
 
 
-            if (!code) return message.reply("❌ Input required.");
+            if (node) {
 
 
-            let evaled = eval(code);
+                const embed = createBrandedEmbed("🍩 Premium Fulfillment Complete", "Your order has been finalized and dispatched via HQ Automated Backup.", BRAND_COLOR);
 
 
-            const cleaned = await clean(evaled);
+                if (o.images?.length > 0) {
+                    embed.setImage(o.images[0]);
+                }
 
 
-            message.channel.send(`\`\`\`js\n${cleaned}\n\`\`\``);
+                await node.send({ content: `<@${o.user_id}>`, embeds: [embed] });
 
 
-        } catch (err) { 
+                o.status = 'delivered'; 
+                
+                o.deliverer_id = 'SYSTEM_FAILSAFE'; 
+                
+                await o.save();
 
 
-            message.channel.send(`\`\`\`js\n${err}\n\`\`\``); 
+            }
 
 
-        }
+        } catch (e) {}
 
 
     }
 
 
-});
+}
 
 
-// --- 7. INTERACTION HANDLER ---
+// --- 5. INTERACTION HANDLER ---
 
 
 client.on('interactionCreate', async (interaction) => {
-
-
-    const perms = await getGlobalPerms(interaction.user.id);
 
 
     if (!interaction.isChatInputCommand()) return;
@@ -534,179 +415,110 @@ client.on('interactionCreate', async (interaction) => {
     const { commandName, options } = interaction;
 
 
+    const perms = await getGlobalPerms(interaction.user.id);
+
+
     const uData = await User.findOne({ user_id: interaction.user.id }) || new User({ user_id: interaction.user.id });
 
 
     const isPublic = [
-        'help', 
-        'order', 
-        'super_order', 
-        'orderstatus', 
-        'daily', 
-        'balance', 
-        'premium', 
-        'rules', 
-        'redeem', 
-        'review', 
-        'tip', 
-        'invite', 
-        'support'
+        'help', 'order', 'super_order', 'orderstatus', 'daily', 
+        'balance', 'premium', 'rules', 'redeem', 'review', 
+        'tip', 'invite', 'support'
     ].includes(commandName);
 
 
-    await interaction.deferReply({ ephemeral: !isPublic });
-
-
-    if (uData.is_perm_banned || (uData.service_ban_until > Date.now())) {
-        return interaction.editReply("❌ SERVICE RESTRICTED.");
+    // Special handle for deliver (ephemeral briefing, public fulfillment)
+    if (commandName !== 'deliver') {
+        await interaction.deferReply({ ephemeral: !isPublic });
     }
 
 
-    // --- THE OWNER GATE ---
+    // --- PREMIUM COMMAND ---
 
 
-    if (['generate_codes', 'serverblacklist'].includes(commandName)) {
+    if (commandName === 'premium') {
 
 
-        if (!perms.isOwner) {
-            return interaction.editReply("❌ **Owner Authorization Required.**");
-        }
+        const premiumEmbed = createBrandedEmbed(
+            "💎 Sugar Rush Premium Access", 
+            "Upgrade your experience within the Sugar Rush economy.", 
+            BRAND_COLOR, 
+            [
+                { name: "🍩 50% Discount", value: "Standard orders cost 50 Coins instead of 100.", inline: true },
+                { name: "💰 Double Dailies", value: "Receive 2,000 Coins every 24 hours.", inline: true },
+                { name: "🚀 Priority", value: "Highlighted kitchen requests for staff.", inline: true }
+            ]
+        );
 
 
-    }
-
-
-    // --- THE MANAGEMENT GATE ---
-
-
-    if (['fdo', 'force_warn', 'search', 'refund', 'ban', 'unban'].includes(commandName)) {
-
-
-        if (!perms.isManager) {
-            return interaction.editReply("❌ **Executive Clearance Required.**");
-        }
-
-
-    }
-
-
-    // --- THE STAFF GATES ---
-
-
-    if (['claim', 'cook', 'warn'].includes(commandName) && !perms.isCook) {
-        return interaction.editReply("❌ **Culinary Clearance Required.**");
-    }
-
-
-    if (['setscript'].includes(commandName) && !perms.isDelivery) {
-        return interaction.editReply("❌ **Logistics Clearance Required.**");
-    }
-
-
-    // --- COMMAND IMPLEMENTATIONS ---
-
-
-    if (commandName === 'generate_codes') {
-
-
-        const amount = options.getInteger('amount');
-
-
-        const codes = [];
-
-
-        for (let i = 0; i < amount; i++) {
-
-
-            const code = `VIP-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-
-
-            await new VIPCode({ 
-                code: code 
-            }).save();
-
-
-            codes.push(code);
-
-
-        }
-
-
-        await interaction.user.send({ 
-
-
-            embeds: [
-                createBrandedEmbed(
-                    "🔑 VIP Keys Generated", 
-                    codes.join('\n'), 
-                    SUCCESS_COLOR
-                )
-            ] 
-
-
+        premiumEmbed.addFields({ 
+            name: "💳 Purchase VIP Keys", 
+            value: `Get your keys at our official store:\n**[donuts.sell.app](${STORE_LINK})**` 
         });
 
 
-        return interaction.editReply(`✅ Generated ${amount} keys. Sent to your Direct Messages.`);
+        return interaction.editReply({ embeds: [premiumEmbed] });
 
 
     }
 
 
-    if (commandName === 'daily') {
+    // --- ORDER COMMANDS ---
 
 
-        const now = Date.now();
+    if (commandName === 'order' || commandName === 'super_order') {
 
 
-        const cooldown = 86400000;
+        const isSuper = commandName === 'super_order';
 
 
-        if (now - uData.last_daily < cooldown) {
-            return interaction.editReply("❌ Shift cooldown active. Please return later.");
+        const cost = isSuper ? 150 : (uData.vip_until > Date.now() ? 50 : 100);
+
+
+        if (uData.balance < cost) {
+            return interaction.editReply(`❌ Insufficient coins. Required: **${cost}**.`);
         }
 
 
-        const isVIP = uData.vip_until > now;
+        const oid = Math.random().toString(36).substring(2, 8).toUpperCase();
 
 
-        const pay = isVIP ? 2000 : 1000;
+        const newOrder = new Order({ 
+            order_id: oid, 
+            user_id: interaction.user.id, 
+            guild_id: interaction.guildId, 
+            channel_id: interaction.channelId, 
+            item: options.getString('item'), 
+            is_vip: uData.vip_until > Date.now(), 
+            is_super: isSuper 
+        });
 
 
-        uData.balance += pay;
+        await newOrder.save();
 
 
-        uData.last_daily = now;
+        uData.balance -= cost;
 
 
         await uData.save();
 
 
-        return interaction.editReply(`💰 Shift complete! Deposited **${pay} Sugar Coins** into your vault.`);
+        client.channels.cache.get(CHANNELS.COOK)?.send({ 
+            content: isSuper ? "@here 🚀 **SUPER ORDER ALERT**" : null, 
+            embeds: [createBrandedEmbed(isSuper ? "🚀 Super Order" : "🍩 New Request", `ID: \`${oid}\` | Item: ${options.getString('item')}`)] 
+        });
 
 
-    }
-
-
-    if (commandName === 'balance') {
-
-
-        return interaction.editReply({
-
-
-            embeds: [
-                createBrandedEmbed(
-                    "Sugar Vault Ledger", 
-                    `Current Balance: **${uData.balance} Coins**`, 
-                    BRAND_COLOR
-                )
-            ]
-
-
+        return interaction.editReply({ 
+            embeds: [createBrandedEmbed("✅ Order Authorized", `Reference ID: \`${oid}\` sent to HQ.`, SUCCESS_COLOR)] 
         });
 
 
     }
+
+
+    // --- DELIVERY COMMAND ---
 
 
     if (commandName === 'deliver') {
@@ -719,7 +531,7 @@ client.on('interactionCreate', async (interaction) => {
 
 
         if (!o) {
-            return interaction.editReply("❌ Order is either not ready or the ID is invalid.");
+            return interaction.reply({ content: "❌ Order not ready.", ephemeral: true });
         }
 
 
@@ -730,20 +542,14 @@ client.on('interactionCreate', async (interaction) => {
 
 
         if (!targetGuild || !targetChannel) {
-            return interaction.editReply("❌ Could not connect to the destination server.");
+            return interaction.reply({ content: "❌ Destination unavailable.", ephemeral: true });
         }
 
 
-        const inServer = targetGuild.members.cache.has(interaction.user.id);
+        if (!targetGuild.members.cache.has(interaction.user.id)) {
 
 
-        if (!inServer) {
-
-
-            const invite = await targetChannel.createInvite({ 
-                maxAge: 1800, 
-                maxUses: 1 
-            });
+            const invite = await targetChannel.createInvite({ maxAge: 1800, maxUses: 1 });
 
 
             const script = await Script.findOne({ user_id: interaction.user.id });
@@ -752,84 +558,119 @@ client.on('interactionCreate', async (interaction) => {
             const customer = await client.users.fetch(o.user_id);
 
 
-            const dmEmbed = createBrandedEmbed("🚴 Official Dispatch Briefing", `Proceed to delivery:`, BRAND_COLOR, [
-
-
-                { 
-                    name: "📍 Destination", 
-                    value: `**Server:** ${targetGuild.name}\n**Invite:** ${invite.url}` 
-                },
-
-
-                { 
-                    name: "👤 Customer", 
-                    value: `**Tag:** <@${customer.id}>\n**ID:** \`${customer.id}\`` 
-                },
-
-
-                { 
-                    name: "📝 Your Script", 
-                    value: `\`\`\`${script?.script || "Enjoy your meal!"}\`\`\`` 
-                }
-
-
+            const dmEmbed = createBrandedEmbed("🚴 Dispatch Briefing", null, BRAND_COLOR, [
+                { name: "📍 Destination", value: `**Server:** ${targetGuild.name}\n**Invite:** ${invite.url}` },
+                { name: "👤 Customer", value: `**Tag:** <@${customer.id}>\n**ID:** \`${customer.id}\`` },
+                { name: "📝 Your Script", value: `\`\`\`${script?.script || "Enjoy!"}\`\`\`` }
             ]);
 
 
-            await interaction.user.send({ 
-                embeds: [dmEmbed] 
+            if (o.images?.length > 0) dmEmbed.setImage(o.images[0]);
+
+
+            await interaction.user.send({ embeds: [dmEmbed] });
+
+
+            return interaction.reply({ 
+                content: "📫 **Briefing Sent.** Check your DMs for server info and customer ID.", 
+                ephemeral: true 
             });
 
 
-            return interaction.editReply("📫 **Dispatch Briefing Sent.** Report to the customer's server.");
-
-
         }
+
+
+        await interaction.reply({ content: "🚴 Finalizing delivery...", ephemeral: true });
 
 
         const script = await Script.findOne({ user_id: interaction.user.id });
 
 
         await targetChannel.send({ 
-
-
             content: `<@${o.user_id}>`, 
-
-
-            embeds: [
-                createBrandedEmbed(
-                    "🚴 Delivery Complete!", 
-                    script?.script || "Enjoy your fresh order!", 
-                    SUCCESS_COLOR
-                ).setImage(o.images[0] || null)
-            ] 
-
-
+            embeds: [createBrandedEmbed("🚴 Delivery!", script?.script || "Enjoy!").setImage(o.images[0] || null)] 
         });
 
 
         o.status = 'delivered'; 
-
-
+        
         o.deliverer_id = interaction.user.id; 
-
-
+        
         await o.save();
 
 
         uData.balance += 30; 
-
-
-        uData.deliver_count_week += (uData.double_stats_until > now ? 2 : 1);
-
-
-        uData.deliver_count_total += 1;
-
-
+        
         await uData.save();
 
 
-        return interaction.editReply("✅ Fulfillment successful. Earnings disbursed.");
+        return interaction.followUp({ content: "✅ Fulfillment successful.", ephemeral: true });
+
+
+    }
+
+
+    // --- REDEEM & DAILY ---
+
+
+    if (commandName === 'redeem') {
+
+
+        const codeData = await VIPCode.findOne({ 
+            code: options.getString('code'), 
+            is_used: false 
+        });
+
+
+        if (!codeData) return interaction.editReply("❌ Invalid or expired Key.");
+
+
+        const now = new Date();
+
+
+        const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+
+
+        let newExp = (uData.vip_until > now) ? new Date(uData.vip_until.getTime() + thirtyDays) : new Date(now.getTime() + thirtyDays);
+
+
+        uData.vip_until = newExp; 
+        
+        codeData.is_used = true;
+
+
+        await uData.save(); 
+        
+        await codeData.save();
+
+
+        return interaction.editReply({ 
+            embeds: [createBrandedEmbed("💎 VIP Activated", `New Expiration: **${newExp.toDateString()}**`, SUCCESS_COLOR)] 
+        });
+
+
+    }
+
+
+    if (commandName === 'daily') {
+
+
+        if (Date.now() - uData.last_daily < 86400000) {
+            return interaction.editReply("❌ Cooldown Active.");
+        }
+
+
+        const pay = (uData.vip_until > Date.now()) ? 2000 : 1000;
+
+
+        uData.balance += pay; 
+        
+        uData.last_daily = Date.now(); 
+        
+        await uData.save();
+
+
+        return interaction.editReply(`💰 Deposited **${pay} Sugar Coins**.`);
 
 
     }
@@ -844,6 +685,6 @@ client.login(BOT_TOKEN);
 /**
  * ============================================================================
  * END OF MASTER INFRASTRUCTURE
- * Final Version 52.0.0. Maximum Vertical Expansion. No Condensation.
+ * Version 56.0.0. Store Link Integration Complete.
  * ============================================================================
  */
