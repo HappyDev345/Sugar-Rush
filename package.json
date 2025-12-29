@@ -1,17 +1,20 @@
 {
   "name": "sugar-rush-bot",
-  "version": "1.0.0",
-  "description": "Sugar Rush Discord Bot",
+  "version": "38.0.0",
+  "description": "Master Automation Infrastructure for Sugar Rush",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "dotenv": "^16.3.1",
-    "mongoose": "^8.0.3"
+    "mongoose": "^8.1.1",
+    "googleapis": "^131.0.0",
+    "dotenv": "^16.4.1"
   },
   "engines": {
-    "node": ">=16.9.0"
-  }
+    "node": ">=16.11.0"
+  },
+  "author": "Sugar Rush Management",
+  "license": "ISC"
 }
