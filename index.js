@@ -119,9 +119,9 @@ async function applyStrikes(userId, reason) {
     const u = await User.findOne({ user_id: userId }) || new User({ user_id: userId });
     u.warnings += 1;
     let banMsg = "";
-    if (u.warnings === 3) { u.service_ban_until = new Date(Date.now() + 3 * 86400000); banMsg = "\n**Result:** 3-Day Suspension."; }
-    else if (u.warnings === 6) { u.service_ban_until = new Date(Date.now() + 7 * 86400000); banMsg = "\n**Result:** 7-Day Suspension."; }
-    else if (u.warnings >= 9) { u.is_perm_banned = true; banMsg = "\n**Result:** PERMANENT TERMINATION."; }
+    if (u.warnings === 3) { u.service_ban_until = new Date(Date.now() + 3 * 86400000); banMsg = "Due to receiving **3 Warnings** with us You have been given a 3-Day Suspension. \n**Appeals:**Join the Sugar Rush [Support Server](https://discord.gg/Q4DsEbJzBJ) or DM us to open a Support ticket."; }
+    else if (u.warnings === 6) { u.service_ban_until = new Date(Date.now() + 7 * 86400000); banMsg = "Due to receiving **6 Warnings** with us You have been given a 7-Day Suspension. from using Sugar Rush \n**Appeals:**Join the Sugar Rush [Support Server](https://discord.gg/Q4DsEbJzBJ) or DM us to open a Support ticket."; }
+    else if (u.warnings >= 9) { u.is_perm_banned = true; banMsg = "Due to receiving **9 Warnings** with us You have been Permanently Suspeneded from using Sugar Rush \n**Appeals:**Join the Sugar Rush [Support Server](https://discord.gg/Q4DsEbJzBJ) or DM us to open a Support ticket."; }
     await u.save();
     
     const target = await client.users.fetch(userId).catch(() => null);
@@ -161,11 +161,11 @@ client.on('interactionCreate', async (int) => {
     
     // --- SERVER BLACKLIST GATE ---
     const isBlacklisted = await ServerBlacklist.findOne({ guild_id: int.guildId });
-    if (isBlacklisted) return int.reply({ content: `❌ **This server is blacklisted.**\nReason: ${isBlacklisted.reason}`, ephemeral: true });
+    if (isBlacklisted) return int.reply({ content: `❌ **This server is blacklisted.**\nReason: ${isBlacklisted.reason} \n**Appeals:**Join the Sugar Rush [Support Server](https://discord.gg/Q4DsEbJzBJ) or DM us to open a Support ticket.`, ephemeral: false });
 
     // --- USER BAN GATE ---
     const uData = await User.findOne({ user_id: int.user.id }) || new User({ user_id: int.user.id });
-    if (uData.is_perm_banned || (uData.service_ban_until && uData.service_ban_until > Date.now())) return int.reply({ content: "You are banned from using this service.", ephemeral: true });
+    if (uData.is_perm_banned || (uData.service_ban_until && uData.service_ban_until > Date.now())) return int.reply({ content: "You are suspeneded from using the Sugar Rush service. \n**Appeals:**Join the Sugar Rush [Support Server](https://discord.gg/Q4DsEbJzBJ) or DM us to open a Support ticket.", ephemeral: true });
 
     // [2] /generate_codes
     if (cmd === 'generate_codes') {
