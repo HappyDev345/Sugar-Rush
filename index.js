@@ -2,7 +2,7 @@
  * ============================================================================
  * SUGAR RUSH - MASTER DISCORD AUTOMATION INFRASTRUCTURE
  * ============================================================================
- * * VERSION: 82.6.13 (FINAL: FDO + AUTO-DELIVER + CRASH GUARD)
+ * * VERSION: 82.6.10 (FINAL: REDEEM RESTORED - ZERO OMISSIONS)
  * * ----------------------------------------------------------------------------
  * 📜 FULL COMMAND REGISTER (35 TOTAL COMMANDS):
  *
@@ -14,7 +14,7 @@
  *
  * [2] MANAGEMENT & DISCIPLINE
  * • /warn [id] [reason]       : (Cooks/Mgmt) Warns user. Pre-cooking ONLY.
- * • /fdo [id] [reason]        : (Mgmt) Force Discipline. Ready Orders ONLY.
+ * • /fdo [id] [reason]        : (Mgmt) Force Discipline. Pre-delivery ONLY.
  * • /force_warn [id] [reason] : (Mgmt) Force Warn. Applied to ANY status.
  * • /ban [uid] [days]         : Service bans a user from ordering.
  * • /unban [uid]              : Removes service ban from a user.
@@ -154,7 +154,8 @@ const OrderSchema = new mongoose.Schema({
     kitchen_msg_id: String,
     rating: { type: Number, default: 0 },
     feedback: { type: String, default: "" },
-    rated: { type: Boolean, default: false }
+    rated: { type: Boolean, default: false },
+    backup_msg_id: String
 });
 
 const User = mongoose.model('User', UserSchema);
@@ -179,17 +180,17 @@ function createEmbed(title, description, color = COLOR_MAIN, fields = []) {
         .addFields(fields);
 }
 
-// SAFE RULES FETCH (Prevents Startup Crash if credentials missing)
+const auth = new google.auth.GoogleAuth({
+    keyFile: 'credentials.json',
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+});
+
 async function fetchRules() {
     try {
-        const auth = new google.auth.GoogleAuth({
-            keyFile: 'credentials.json',
-            scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-        });
         const sheets = google.sheets({ version: 'v4', auth });
         const res = await sheets.spreadsheets.values.get({ spreadsheetId: CONF_SHEET, range: 'Rules!A1:B20' });
         return res.data.values.map(r => `🍩 **${r[0]}**\n└ ${r[1]}`).join('\n\n');
-    } catch (e) { return "Rules currently unavailable."; }
+    } catch (e) { return "Rules Offline."; }
 }
 
 async function applyWarningLogic(user, reason) {
@@ -207,11 +208,10 @@ async function applyWarningLogic(user, reason) {
     }
     await user.save();
     
-    try {
-        const customer = await client.users.fetch(user.user_id);
-        await customer.send({ embeds: [createEmbed("⚠️ Discipline Issued", `**Reason:** ${reason}\n**Strikes:** ${user.warnings}\n**Penalty:** ${punishment}`, COLOR_FAIL)] });
-    } catch(e) {}
-    
+    const customer = await client.users.fetch(user.user_id).catch(() => null);
+    if (customer) {
+        customer.send({ embeds: [createEmbed("⚠️ Discipline Issued", `**Reason:** ${reason}\n**Strikes:** ${user.warnings}\n**Penalty:** ${punishment}`, COLOR_FAIL)] }).catch(() => {});
+    }
     client.channels.cache.get(CHAN_WARNINGS)?.send({ embeds: [createEmbed("🛡️ Discipline Log", `User: <@${user.user_id}>\nReason: ${reason}\nPenalty: ${punishment}`, COLOR_FAIL)] });
     return punishment;
 }
@@ -270,7 +270,13 @@ async function updateOrderArchive(orderId) {
 }
 
 // ============================================================================
-// [4] INTERACTION ROUTER
+// [4] MAINTENANCE & REVOLVING STATUS
+// ============================================================================
+
+let statusIndex = 0;
+
+// ============================================================================
+// [5] INTERACTION ROUTER
 // ============================================================================
 
 const client = new Client({
@@ -309,10 +315,10 @@ client.on('interactionCreate', async (interaction) => {
         const { commandName, options } = interaction;
         const userData = await User.findOne({ user_id: interaction.user.id }) || new User({ user_id: interaction.user.id });
 
-        // GATES
+        // GATES: BANS & SERVER BLACKLIST
         if (userData.is_perm_banned || (userData.service_ban_until > Date.now())) {
             return interaction.reply({ 
-                embeds: [createEmbed("❌ Access Denied", `You are currently banned.\n\n**Appeal:** Join the [Support Server](${CONF_SUPPORT_SERVER})`, COLOR_FAIL)], 
+                embeds: [createEmbed("❌ Access Denied", `You are currently banned from Sugar Rush.\n\n**Appeal:** Join the [Support Server](${CONF_SUPPORT_SERVER}) OR DM this bot to open a ticket.`, COLOR_FAIL)], 
                 ephemeral: true 
             });
         }
@@ -320,7 +326,7 @@ client.on('interactionCreate', async (interaction) => {
         const isServerBlacklisted = await ServerBlacklist.findOne({ guild_id: interaction.guildId });
         if (isServerBlacklisted) {
             return interaction.reply({ 
-                embeds: [createEmbed("❌ Server Blacklisted", `**Reason:** ${isServerBlacklisted.reason}`, COLOR_FAIL)], 
+                embeds: [createEmbed("❌ Server Blacklisted", `**Reason:** ${isServerBlacklisted.reason}\n\n**Appeal:** Join the [Support Server](${CONF_SUPPORT_SERVER}) OR DM this bot to open a ticket.`, COLOR_FAIL)], 
                 ephemeral: true 
             });
         }
@@ -337,7 +343,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ embeds: [createEmbed("📖 Sugar Rush Directory", "Complete Command Protocol", COLOR_MAIN, fields)] });
         }
 
-        // [1] SYSTEM
+        // [1, 2] SYSTEM & DISCIPLINE
         if (commandName === 'generate_codes') {
             if (interaction.user.id !== CONF_OWNER) return interaction.reply({ embeds: [createEmbed("❌ Unauthorized", "Owner Only.", COLOR_FAIL)] });
             const amt = options.getInteger('amount');
@@ -362,24 +368,18 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ embeds: [createEmbed("✅ Server Restored", `ID: ${options.getString('id')}`, COLOR_SUCCESS)] });
         }
 
-        // [2] DISCIPLINE
         if (['warn', 'fdo', 'force_warn'].includes(commandName)) {
             if (['fdo', 'force_warn'].includes(commandName) && !interaction.member.roles.cache.has(ROLE_MANAGER)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Management Only.", COLOR_FAIL)] });
             if (commandName === 'warn' && !interaction.member.roles.cache.has(ROLE_COOK) && !interaction.member.roles.cache.has(ROLE_MANAGER)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Cooks/Management Only.", COLOR_FAIL)] });
             
             const o = await Order.findOne({ order_id: options.getString('id') });
             if (!o) return interaction.reply({ embeds: [createEmbed("❌ Error", "Order not found.", COLOR_FAIL)] });
-            
             if (commandName === 'warn' && !['pending', 'claimed'].includes(o.status)) return interaction.reply({ embeds: [createEmbed("❌ Error", "Pre-cook orders only.", COLOR_FAIL)] });
-            if (commandName === 'fdo' && o.status !== 'ready') return interaction.reply({ embeds: [createEmbed("❌ Error", "FDO is for READY orders only.", COLOR_FAIL)] });
+            if (commandName === 'fdo' && o.status !== 'ready') return interaction.reply({ embeds: [createEmbed("❌ Error", "Ready orders only.", COLOR_FAIL)] });
             
             const target = await User.findOne({ user_id: o.user_id }) || new User({ user_id: o.user_id });
             const pen = await applyWarningLogic(target, options.getString('reason'));
-            
-            if (commandName === 'warn') o.status = 'cancelled_warn'; 
-            if (commandName === 'fdo') o.status = 'cancelled_fdo'; 
-            await o.save();
-            
+            if (commandName === 'warn') o.status = 'cancelled_warn'; if (commandName === 'fdo') o.status = 'cancelled_fdo'; await o.save();
             return interaction.reply({ embeds: [createEmbed("✅ Action Logged", `Penalty: ${pen}`, COLOR_SUCCESS)] });
         }
 
@@ -403,7 +403,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ embeds: [createEmbed("✅ Refunded", "Order refunded successfully.", COLOR_SUCCESS)] });
         }
 
-        // [3] ECONOMY
+        // [3, 4] ECONOMY & ORDERING
         if (commandName === 'balance') return interaction.reply({ embeds: [createEmbed("💰 Vault", `Balance: **${userData.balance} Sugar Coins**`)] });
         
         if (commandName === 'daily') {
@@ -438,10 +438,9 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         if (commandName === 'premium') {
-            return interaction.reply({ embeds: [createEmbed("💎 Premium Store", `**[Click to Visit Shop](${CONF_STORE})**`, COLOR_VIP)] });
+            return interaction.reply({ embeds: [createEmbed("💎 Premium Store", `**[Click to Visit Shop](${CONF_STORE})**\n\n• 50% Off Orders\n• 2x Daily Rewards\n• Gold Profile Status`, COLOR_VIP)] });
         }
 
-        // [4] ORDERING
         if (commandName === 'order' || commandName === 'super_order') {
             const isVip = userData.vip_until > Date.now();
             let cost = (commandName === 'super_order' ? 150 : 100);
@@ -465,21 +464,18 @@ client.on('interactionCreate', async (interaction) => {
                 kitchenMsgId = msg.id;
             }
 
-            // SAVE ORDER
-            await new Order({ 
-                order_id: oid, 
-                user_id: interaction.user.id, 
-                guild_id: interaction.guildId, 
-                channel_id: interaction.channelId, 
-                item: options.getString('item'), 
-                is_vip: isVip, 
-                is_super: commandName === 'super_order', 
-                kitchen_msg_id: kitchenMsgId 
-            }).save();
-            
+            await new Order({ order_id: oid, user_id: interaction.user.id, guild_id: interaction.guildId, channel_id: interaction.channelId, item: options.getString('item'), is_vip: isVip, is_super: commandName === 'super_order', kitchen_msg_id: kitchenMsgId }).save();
             userData.balance -= cost; await userData.save();
+
+            const fields = [
+                { name: "Order ID", value: `\`${oid}\``, inline: true },
+                { name: "Item", value: options.getString('item'), inline: true },
+                { name: "Cost", value: `${cost} Sugar Coins`, inline: true },
+                { name: "Status", value: "PENDING", inline: true }
+            ];
+            
             updateOrderArchive(oid);
-            return interaction.reply({ embeds: [createEmbed(recTitle, "Thank you for choosing Sugar Rush. Your order has been sent to the kitchen.", col)] });
+            return interaction.reply({ embeds: [createEmbed(recTitle, "Thank you for choosing Sugar Rush. Your order has been sent to the kitchen.", col, fields)] });
         }
 
         if (commandName === 'orderstatus') {
@@ -503,7 +499,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ embeds: [createEmbed("✅ Submitted", "Review published.", COLOR_SUCCESS)] });
         }
 
-        // [5] STAFF
+        // [5, 6, 7] STAFF
         if (commandName === 'claim') {
             if (!interaction.member.roles.cache.has(ROLE_COOK)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Cooks only.", COLOR_FAIL)] });
             const o = await Order.findOne({ order_id: options.getString('id'), status: 'pending' });
@@ -532,7 +528,10 @@ client.on('interactionCreate', async (interaction) => {
             setTimeout(async () => {
                 const check = await Order.findOne({ order_id: o.order_id });
                 if (check && check.status === 'claimed') {
-                    check.status = 'pending'; check.chef_id = null; check.chef_name = null; await check.save();
+                    check.status = 'pending';
+                    check.chef_id = null;
+                    check.chef_name = null;
+                    await check.save();
                     client.channels.cache.get(CHAN_COOK)?.send({ embeds: [createEmbed("⚠️ Claim Expired", `Order \`${check.order_id}\` is back in queue (5m Timeout).`, COLOR_FAIL)] });
                 }
             }, 300000);
@@ -576,7 +575,7 @@ client.on('interactionCreate', async (interaction) => {
             if (!interaction.member.roles.cache.has(ROLE_DELIVERY)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Drivers only.", COLOR_FAIL)] });
             
             const o = await Order.findOne({ order_id: options.getString('id'), status: 'ready' });
-            if (!o) return interaction.reply({ embeds: [createEmbed("❌ Error", "Order is not ready.", COLOR_FAIL)] });
+            if (!o) return interaction.reply({ embeds: [createEmbed("❌ Error", "Order is not ready or valid.", COLOR_FAIL)] });
             
             try {
                 const guild = client.guilds.cache.get(o.guild_id);
@@ -626,7 +625,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // [8] UTILITY
-        if (commandName === 'run_quota') { if (!interaction.member.roles.cache.has(ROLE_MANAGER)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Unauthorized.", COLOR_FAIL)] }); return executeQuotaRun(interaction); }
+        if (commandName === 'run_quota') { if (!interaction.member.roles.cache.has(ROLE_MANAGER)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Unauthorized.", COLOR_FAIL)] }); await executeQuotaRun(); return interaction.reply({ embeds: [createEmbed("✅ Audit", "Audit complete.", COLOR_SUCCESS)] }); }
         if (commandName === 'invite') {
             const link = `https://discord.com/api/oauth2/authorize?client_id=${client.user.id}&permissions=117761&scope=bot%20applications.commands`;
             return interaction.reply({ embeds: [createEmbed("🤖 Bot Invite", `[Click here to invite Sugar Rush](${link})`, COLOR_MAIN)] });
@@ -636,7 +635,6 @@ client.on('interactionCreate', async (interaction) => {
         
     } catch (err) {
         console.error("CRITICAL ERROR:", err);
-        // Emergency reply to prevent "Application Did Not Respond"
         if (!interaction.replied && !interaction.deferred) {
             await interaction.reply({ content: "❌ System Error: The command failed. Check console.", ephemeral: true }).catch(() => {});
         }
@@ -687,9 +685,6 @@ client.on('ready', async () => {
     await client.application.commands.set(commands);
     console.log("Commands registered on Discord.");
 });
-
-// --- STATUS AND MAINTENANCE LOOP ---
-let statusIndex = 0;
 
 setInterval(async () => { 
     try {
