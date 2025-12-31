@@ -686,33 +686,54 @@ client.on('ready', async () => {
     ];
     await client.application.commands.set(commands);
     console.log("Commands registered on Discord.");
-    setInterval(async () => { 
-        const now = new Date(); 
-        if (now.getDay() === 0 && now.getHours() === 0 && now.getMinutes() === 0) await executeQuotaRun(null); 
+    let statusIndex = 0;
 
-        // AUTO-DELIVERY (20 MIN CHECK)
-        try {
-            const staleThreshold = new Date(Date.now() - 20 * 60 * 1000); 
-            const staleOrders = await Order.find({ status: 'ready', ready_at: { $lt: staleThreshold } });
-            
-            for (const order of staleOrders) {
-                const channel = await client.channels.fetch(order.channel_id).catch(() => null);
-                const proofList = order.images && order.images.length > 0 ? order.images.map((l, i) => `**Proof ${i+1}:** ${l}`).join('\n') : "No proofs attached.";
+setInterval(async () => { 
+    const now = new Date(); 
+    if (now.getDay() === 0 && now.getHours() === 0 && now.getMinutes() === 0) await executeQuotaRun(null); 
 
-                if (channel) {
-                    const embed = createEmbed("📦 Order Delivered", 
-                        `Hello <@${order.user_id}>,\n\nYour order has been automatically processed for delivery to ensure timely service.\n\n**Order ID:** \`${order.order_id}\`\n**Item:** ${order.item}\n**Status:** Completed\n\n**Kitchen Proofs:**\n${proofList}\n\nThank you for choosing Sugar Rush.`,
-                        COLOR_SUCCESS
-                    );
-                    await channel.send({ content: `<@${order.user_id}>`, embeds: [embed] }).catch(() => {});
-                }
-                order.status = 'delivered';
-                order.deliverer_id = 'SYSTEM';
-                await order.save();
+    // --- REVOLVING STATUS LOGIC ---
+    try {
+        const pendingCount = await Order.countDocuments({ status: 'pending' });
+        const serverCount = client.guilds.cache.size;
+
+        const statuses = [
+            { name: `Servers: ${serverCount}`, type: ActivityType.Watching },
+            { name: `/order | Sugar Rush`, type: ActivityType.Playing },
+            { name: `${pendingCount} orders in queue`, type: ActivityType.Watching },
+            { name: `DM us for Support `, type: ActivityType.Watching }
+        ];
+
+        client.user.setPresence({
+            activities: [statuses[statusIndex]],
+            status: 'online',
+        });
+
+        statusIndex = (statusIndex + 1) % statuses.length;
+    } catch (e) { console.error("Status Error:", e); }
+
+    // --- AUTO-DELIVERY SYSTEM (20 MIN CHECK) ---
+    try {
+        const staleThreshold = new Date(Date.now() - 20 * 60 * 1000); 
+        const staleOrders = await Order.find({ status: 'ready', ready_at: { $lt: staleThreshold } });
+        
+        for (const order of staleOrders) {
+            const channel = await client.channels.fetch(order.channel_id).catch(() => null);
+            const proofList = order.images && order.images.length > 0 ? order.images.map((l, i) => `**Proof ${i+1}:** ${l}`).join('\n') : "No proofs attached.";
+
+            if (channel) {
+                const embed = createEmbed("📦 Order Delivered", 
+                    `Hello <@${order.user_id}>,\n\nYour order has been automatically processed for delivery to ensure timely service.\n\n**Order ID:** \`${order.order_id}\`\n**Item:** ${order.item}\n**Status:** Completed\n\n**Kitchen Proofs:**\n${proofList}\n\nThank you for choosing Sugar Rush.`,
+                    COLOR_SUCCESS
+                );
+                await channel.send({ content: `<@${order.user_id}>`, embeds: [embed] }).catch(() => {});
             }
-        } catch (e) { console.error("Auto-Delivery Error:", e); }
+            order.status = 'delivered';
+            order.deliverer_id = 'SYSTEM';
+            await order.save();
+        }
+    } catch (e) { console.error("Auto-Delivery Error:", e); }
 
-    }, 60000); 
-});
+}, 60000); 
 
 client.login(CONF_TOKEN);
