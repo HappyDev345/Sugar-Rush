@@ -532,15 +532,31 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ embeds: [createEmbed("👨‍🍳 Claimed", "Order assigned to you. You have 5 minutes to cook.", COLOR_SUCCESS)] });
     }
 
+    // --- PATCHED COOK LOGIC ---
     if (commandName === 'cook') {
         if (!interaction.member.roles.cache.has(ROLE_COOK)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Cooks only.", COLOR_FAIL)] });
+        
         const o = await Order.findOne({ order_id: options.getString('id'), status: 'claimed', chef_id: interaction.user.id });
-        o.status = 'cooking'; await o.save();
+        if (!o) return interaction.reply({ embeds: [createEmbed("❌ Error", "Order not found or not claimed by you.", COLOR_FAIL)] });
+
+        const proofs = [];
+        if (options.getAttachment('image')) proofs.push(options.getAttachment('image').url);
+        if (options.getString('link')) proofs.push(options.getString('link'));
+        if (options.getAttachment('image2')) proofs.push(options.getAttachment('image2').url);
+        if (options.getString('link2')) proofs.push(options.getString('link2'));
+        if (options.getAttachment('image3')) proofs.push(options.getAttachment('image3').url);
+        if (options.getString('link3')) proofs.push(options.getString('link3'));
+
+        o.status = 'cooking'; 
+        o.images = proofs;
+        await o.save();
+
         setTimeout(async () => {
             await Order.findOneAndUpdate({ order_id: o.order_id }, { status: 'ready', ready_at: new Date() });
             client.channels.cache.get(CHAN_DELIVERY).send({ embeds: [createEmbed("🥡 Order Ready", `**ID:** ${o.order_id}\n**Customer:** <@${o.user_id}>`, COLOR_MAIN)] });
         }, 180000);
-        return interaction.reply({ embeds: [createEmbed("♨️ Cooking", "Timer started (3m).", COLOR_MAIN)] });
+
+        return interaction.reply({ embeds: [createEmbed("♨️ Cooking", `Timer started (3m).\n**Proofs:** ${proofs.length}`, COLOR_MAIN)] });
     }
 
     if (commandName === 'orderlist') {
@@ -549,16 +565,23 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ embeds: [createEmbed("📋 Kitchen Queue", orders.map(o => `• \`${o.order_id}\` | ${o.item}`).join('\n') || "Empty.")] });
     }
 
+    // --- PATCHED DELIVER LOGIC ---
     if (commandName === 'deliver') {
         if (!interaction.member.roles.cache.has(ROLE_DELIVERY)) return interaction.reply({ embeds: [createEmbed("❌ Denied", "Drivers only.", COLOR_FAIL)] });
+        
         const o = await Order.findOne({ order_id: options.getString('id'), status: 'ready' });
+        if (!o) return interaction.reply({ embeds: [createEmbed("❌ Error", "Order is not ready or valid.", COLOR_FAIL)] });
         
         try {
             const guild = client.guilds.cache.get(o.guild_id);
             const inv = await guild.channels.cache.random().createInvite();
             o.status = 'delivering'; o.deliverer_id = interaction.user.id; await o.save();
+            
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`complete_${o.order_id}`).setLabel('Confirm Delivery').setStyle(ButtonStyle.Success));
-            await interaction.user.send({ content: `Invite: ${inv.url}`, components: [row] }); 
+            
+            const proofList = o.images && o.images.length > 0 ? o.images.map((l, i) => `**Proof ${i+1}:** ${l}`).join('\n') : "No proofs attached.";
+            await interaction.user.send({ content: `**📦 DELIVERY DISPATCH**\n\n**Destination:** ${inv.url}\n**Customer:** <@${o.user_id}>\n\n**🍳 PROOFS:**\n${proofList}`, components: [row] }); 
+            
             return interaction.reply({ embeds: [createEmbed("📫 Dispatch", "Briefing sent to DMs.", COLOR_SUCCESS)] });
         } catch (e) {
             return interaction.reply({ embeds: [createEmbed("❌ Error", "This order is unavailable for Manual dispatch.", COLOR_FAIL)] });
