@@ -309,12 +309,12 @@ client.on('interactionCreate', async (interaction) => {
 
         // GATES
         if (userData.is_perm_banned || (userData.service_ban_until > Date.now())) {
-            return interaction.reply({ embeds: [createEmbed("❌ Access Denied", `You are currently banned.`, COLOR_FAIL)], ephemeral: true });
+            return interaction.reply({ embeds: [createEmbed("❌ Access Denied", `You are currently banned form using Sugar Rush Services\nBelive this is a mistake? Appeals can be made by DMing us.`, COLOR_FAIL)], ephemeral: true });
         }
         
         const isServerBlacklisted = await ServerBlacklist.findOne({ guild_id: interaction.guildId });
         if (isServerBlacklisted) {
-            return interaction.reply({ embeds: [createEmbed("❌ Server Blacklisted", `**Reason:** ${isServerBlacklisted.reason}`, COLOR_FAIL)], ephemeral: true });
+            return interaction.reply({ embeds: [createEmbed("❌ This Server has been Blacklisted", `**Reason:** ${isServerBlacklisted.reason}\nIf you belive this is a mistake you may submit an appeal\n Appeals may be made by DMing us.`, COLOR_FAIL)], ephemeral: false });
         }
 
         // HELP
@@ -338,7 +338,8 @@ client.on('interactionCreate', async (interaction) => {
                 await new VIPCode({ code: c }).save();
                 codes.push(c);
             }
-            return interaction.reply({ embeds: [createEmbed("✅ Generated", `Created ${codes.length} codes.`, COLOR_SUCCESS)] });
+            await interaction.user.send({ embeds: [createEmbed("✅ Generated Codes", `Codes:\n${codes.join('\n')}`, COLOR_SUCCESS)] }).catch(() => {});
+            return interaction.reply({ embeds: [createEmbed("✅ Generated", `Created ${codes.length} codes. Sent to DMs.`, COLOR_SUCCESS)], ephemeral: true });
         }
 
         if (commandName === 'serverblacklist') {
@@ -429,7 +430,7 @@ client.on('interactionCreate', async (interaction) => {
             const cookChan = client.channels.cache.get(CHAN_COOK);
             let kitchenMsgId = null;
             if (cookChan) {
-                const msg = await cookChan.send({ content: commandName === 'super_order' ? "@here 🚀 **PRIORITY**" : null, embeds: [createEmbed(commandName === 'super_order' ? "🚀 SUPER ORDER" : "🍩 New Order", `ID: ${oid}\nItem: ${options.getString('item')}`)] });
+                const msg = await cookChan.send({ content: commandName === 'super_order' ? "@everyone 🚀 **PRIORITY**" : null, embeds: [createEmbed(commandName === 'super_order' ? "@everyone 🚀 SUPER ORDER" : (isVip ? "@here 💎 VIP ORDER" : "🍩 New Order"), `ID: ${oid}\nItem: ${options.getString('item')}`)] });
                 kitchenMsgId = msg.id;
             }
             await new Order({ order_id: oid, user_id: interaction.user.id, guild_id: interaction.guildId, channel_id: interaction.channelId, item: options.getString('item'), is_vip: isVip, is_super: commandName === 'super_order', kitchen_msg_id: kitchenMsgId }).save();
@@ -439,7 +440,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         if (commandName === 'orderstatus') {
-            const orders = await Order.find({ user_id: interaction.user.id, status: { $ne: 'delivered' } });
+            const orders = await Order.find({ user_id: interaction.user.id, status: { $nin: ['delivered', 'refunded', 'cancelled_warn', 'cancelled_fdo'] } });
             return interaction.reply({ embeds: [createEmbed("🍩 Active Orders", orders.map(o => `• \`${o.order_id}\`: ${o.status}`).join('\n') || "None.")] });
         }
 
@@ -466,6 +467,7 @@ client.on('interactionCreate', async (interaction) => {
             const o = await Order.findOne({ order_id: options.getString('id'), status: 'pending' });
             if (!o) return interaction.reply({ embeds: [createEmbed("❌ Error", "Invalid ID.", COLOR_FAIL)] });
             o.status = 'claimed'; o.chef_id = interaction.user.id; o.chef_name = interaction.user.username; await o.save();
+            client.users.fetch(o.user_id).then(u => u.send({ embeds: [createEmbed("👨‍🍳 Order Claimed", `Your order \`${o.order_id}\` has been claimed by **${interaction.user.username}**.`, COLOR_SUCCESS)] }).catch(() => {}));
             updateOrderArchive(o.order_id);
             setTimeout(async () => {
                 const check = await Order.findOne({ order_id: o.order_id });
@@ -483,6 +485,7 @@ client.on('interactionCreate', async (interaction) => {
             if (options.getAttachment('image2')) proofs.push(options.getAttachment('image2').url);
             if (options.getAttachment('image3')) proofs.push(options.getAttachment('image3').url);
             o.status = 'cooking'; o.images = proofs; await o.save();
+            client.users.fetch(o.user_id).then(u => u.send({ embeds: [createEmbed("♨️ Cooking", `Your order \`${o.order_id}\` is now being cooked!`, COLOR_MAIN)] }).catch(() => {}));
             setTimeout(async () => {
                 await Order.findOneAndUpdate({ order_id: o.order_id }, { status: 'ready', ready_at: new Date() });
                 client.channels.cache.get(CHAN_DELIVERY).send({ embeds: [createEmbed("🥡 Order Ready", `ID: ${o.order_id}\nCustomer: <@${o.user_id}>`)] });
@@ -632,7 +635,7 @@ client.on('ready', async () => {
                 const channel = await client.channels.fetch(order.channel_id).catch(() => null);
                 if (channel) {
                     const proofs = order.images?.length ? order.images.map((l, i) => `**Proof ${i+1}:** ${l}`).join('\n') : "None.";
-                    const embed = createEmbed("📦 Order Delivered", `Hello <@${order.user_id}>,\n\nAuto-processed for timely service.\n\n**ID:** \`${order.order_id}\`\n**Item:** ${order.item}\n**Proofs:**\n${proofs}`, COLOR_SUCCESS);
+                    const embed = createEmbed("📦 Order Delivered", `Hello <@${order.user_id}>,\n\nThank you for choosing Sugar Rush Here is your Order.\n\n**ID:** \`${order.order_id}\`\n**Item:** ${order.item}\n**Proofs:**\n${proofs}\n Please Enjoy!`, COLOR_SUCCESS);
                     await channel.send({ content: `<@${order.user_id}>`, embeds: [embed] }).catch(() => {});
                 }
                 order.status = 'delivered'; order.deliverer_id = 'SYSTEM'; await order.save();
