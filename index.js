@@ -217,9 +217,16 @@ async function applyWarningLogic(user, reason) {
 }
 
 async function executeQuotaRun(interaction = null) {
-    const users = await User.find({ $or: [{ cook_count_week: { $gt: 0 } }, { deliver_count_week: { $gt: 0 } }] });
+    // UPDATED QUERY: Use 'total' stats > 0 to identify "Active Staff", ensuring those with 0 weekly orders are still counted/failed.
+    const users = await User.find({ $or: [{ cook_count_total: { $gt: 0 } }, { deliver_count_total: { $gt: 0 } }] });
+    
+    // Sort for top performers
     const topStaff = [...users].sort((a, b) => (b.cook_count_week + b.deliver_count_week) - (a.cook_count_week + a.deliver_count_week)).slice(0, 5);
+    
+    // Calculate total work for the WEEK (Standard + Super included in user counters)
     const totalWork = users.reduce((acc, u) => acc + u.deliver_count_week + u.cook_count_week, 0);
+    
+    // Global Quota = Total Weekly Orders / Active Staff Count
     let globalQuota = Math.ceil(totalWork / Math.max(1, users.length));
     if (globalQuota < 5) globalQuota = 5;
 
@@ -257,7 +264,7 @@ async function executeQuotaRun(interaction = null) {
             { name: "❌ Failed", value: failedStr.length > 1024 ? failedStr.substring(0, 1021) + "..." : failedStr }
         );
 
-    client.channels.cache.get(CHAN_QUOTA)?.send({ content: "@here 📢 **WEEKLY AUDIT**", embeds: [embed] });
+    client.channels.cache.get(CHAN_QUOTA)?.send({ content: "@here 📢 **WEEKLY AUDIT COMPLETE**", embeds: [embed] });
 }
 
 async function updateOrderArchive(orderId) {
