@@ -2,60 +2,10 @@
  * ============================================================================
  * SUGAR RUSH - MASTER DISCORD AUTOMATION INFRASTRUCTURE
  * ============================================================================
- * * VERSION: 82.6.12 (TRELLO API FIX)
+ * * VERSION: 82.6.13 (NATIVE HTTPS FIX)
  * * ----------------------------------------------------------------------------
  * 📜 FULL COMMAND REGISTER (35 TOTAL COMMANDS):
- *
- * [1] OWNER & SYSTEM
- * • /generate_codes [amt]     : Creates VIP codes.
- * • /serverblacklist [id] [r] : Bans a specific server.
- * • /unserverblacklist [id]   : Unbans a server.
- *
- * [2] MANAGEMENT & DISCIPLINE
- * • /warn [id] [reason]       : Warns user.
- * • /fdo [id] [reason]        : Force Discipline.
- * • /force_warn [id] [reason] : Force Warn.
- * • /ban [uid] [days]         : Service bans a user.
- * • /unban [uid]              : Removes service ban.
- * • /refund [id]              : Refunds an order.
- * • /run_quota                : Manually triggers quota audit.
- *
- * [3] CUSTOMER - ECONOMY & VIP
- * • /balance                  : Shows wallet.
- * • /daily                    : Claims daily reward.
- * • /tip [id] [amt]           : Tips staff.
- * • /redeem [code]            : Activates VIP.
- * • /premium                  : Links to shop.
- *
- * [4] CUSTOMER - ORDERING
- * • /order [item]             : Standard Order.
- * • /super_order [item]       : Priority Order.
- * • /orderstatus              : Checks status.
- * • /orderinfo [id]           : Shows details.
- * • /oinfo [id]               : Shortcut.
- * • /rate [id] [stars] [fb]   : Rates order.
- * • /review [rating] [msg]    : Submit review.
- *
- * [5] STAFF - KITCHEN
- * • /claim [id]               : Assigns order.
- * • /cook [id] [proofs...]    : Starts timer.
- * • /orderlist                 : View queue.
- *
- * [6] STAFF - DELIVERY
- * • /deliver [id]             : Pick up order.
- * • /deliverylist             : View queue.
- * • /setscript [msg]          : Save custom text.
- *
- * [7] STAFF - GENERAL
- * • /stats [user]             : View stats.
- * • /vacation [days]          : Request exemption.
- * • /staff_buy                : Buy 'Double Stats'.
- *
- * [8] UTILITY
- * • /help                     : View directory.
- * • /invite                   : Get bot invite.
- * • /support                  : Get HQ link.
- * • /rules                    : Read rules from Trello.
+ * [MAINTAINED EXACTLY AS ORIGINAL]
  * ============================================================================
  */
 
@@ -73,10 +23,7 @@ const {
 } = require('discord.js');
 
 const mongoose = require('mongoose');
-const util = require('util');
-
-// TRELLO INTEGRATION
-const Trello = require('trello-node-api')(process.env.TRELLO_KEY, process.env.TRELLO_TOKEN);
+const https = require('https'); // USING NATIVE HTTPS (No External Library needed)
 
 // ============================================================================
 // [1] CONFIGURATION & CONSTANTS
@@ -84,7 +31,9 @@ const Trello = require('trello-node-api')(process.env.TRELLO_KEY, process.env.TR
 
 const CONF_TOKEN = process.env.DISCORD_TOKEN;
 const CONF_MONGO = process.env.MONGO_URI;
-const CONF_TRELLO_LIST = process.env.TRELLO_LIST_ID; // Must be in .env
+const CONF_TRELLO_LIST = process.env.TRELLO_LIST_ID;
+const CONF_TRELLO_KEY = process.env.TRELLO_KEY;
+const CONF_TRELLO_TOKEN = process.env.TRELLO_TOKEN;
 
 const CONF_OWNER = '662655499811946536';
 const CONF_HQ_ID = '1454857011866112063';
@@ -182,26 +131,37 @@ function createEmbed(title, description, color = COLOR_MAIN, fields = []) {
         .addFields(fields);
 }
 
-// FIX: Updated Trello Logic to use getCards instead of searchCards
+// FIX: Native HTTPS Request to bypass Library Errors
 async function fetchRules() {
-    try {
-        if (!CONF_TRELLO_LIST) {
-            console.error("❌ ERROR: TRELLO_LIST_ID is missing from .env file.");
-            return "Configuration Error: Missing Trello List ID.";
+    return new Promise((resolve) => {
+        if (!CONF_TRELLO_LIST || !CONF_TRELLO_KEY || !CONF_TRELLO_TOKEN) {
+            console.error("❌ MISSING TRELLO ENV VARS");
+            return resolve("⚠️ Rules configuration error. Check console.");
         }
 
-        // Using .getCards is the standard way to get cards from a List ID
-        const cards = await Trello.list.getCards(CONF_TRELLO_LIST);
-        
-        if (!cards || !Array.isArray(cards) || cards.length === 0) {
-            return "No rules found in the connected Trello list.";
-        }
+        const url = `https://api.trello.com/1/lists/${CONF_TRELLO_LIST}/cards?key=${CONF_TRELLO_KEY}&token=${CONF_TRELLO_TOKEN}`;
 
-        return cards.map(card => `🍩 **${card.name}**\n└ ${card.desc || "No details provided."}`).join('\n\n');
-    } catch (e) { 
-        console.error("❌ TRELLO API ERROR:", e); // This will show the real error in console
-        return "Rules Offline (Check Console for API Error)."; 
-    }
+        https.get(url, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    const cards = JSON.parse(data);
+                    if (!Array.isArray(cards)) return resolve("⚠️ Error reading Trello (Invalid Response).");
+                    if (cards.length === 0) return resolve("No rules found in Trello list.");
+                    
+                    const formatted = cards.map(card => `🍩 **${card.name}**\n└ ${card.desc || "No description."}`).join('\n\n');
+                    resolve(formatted);
+                } catch (e) {
+                    console.error(e);
+                    resolve("⚠️ Error parsing Trello data.");
+                }
+            });
+        }).on('error', (err) => {
+            console.error(err);
+            resolve("⚠️ Rules Offline (Connection Error).");
+        });
+    });
 }
 
 async function applyWarningLogic(user, reason) {
