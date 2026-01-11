@@ -37,7 +37,7 @@ const CONF_TRELLO_TOKEN = process.env.TRELLO_TOKEN;
 
 const CONF_OWNER = '662655499811946536';
 const CONF_HQ_ID = '1454857011866112063';
-const CONF_STORE = "https://donuts.sell.app/";
+const CONF_STORE = "https://patreon.com/Sugar_Rush_Services";
 const CONF_SUPPORT_SERVER = "https://discord.gg/Q4DsEbJzBJ";
 
 // ROLES
